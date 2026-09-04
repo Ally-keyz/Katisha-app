@@ -121,22 +121,6 @@ class AppRw {
     'download_ticket': 'Kurura Ikirata',
     'share_ticket': 'Sangira Ikirata',
 
-    // ── Agent ──────────────────────────────────
-    'agent_dashboard': 'Dashibodi',
-    'todays_bookings': 'Uburyo bw\'Uyu Munsi',
-    'pending_tickets': 'Ibirata Birindiriye',
-    'assigned_routes': 'Inzira Zemewe',
-    'confirm_booking': 'Emeza Uburyo',
-    'reject_booking': 'Anka Uburyo',
-    'rejection_reason': 'Impamvu yo Gukanika',
-    'mark_issues': 'Menyesha ko Yatanzwe',
-    'mark_issued': 'Menyesha ko Yatanzwe',
-    'unmark_issued': 'Kubura Ibimenyetso',
-    'issued': 'Yatanzwe',
-    'all_bookings': 'Uburyo Bwose',
-    'booking_requests': 'Ibisabwa',
-    'quick_access': 'Uruziga Rwihuse',
-
     // ── Departure Management ───────────────────
     'departure_management': 'Kugenzura Guhagarara',
     'blocked': 'Buzuye',
@@ -209,7 +193,7 @@ class AppRw {
     'title_agency': 'Hitamo agency ushaka',
     'title_schedule': 'Urashaka kugenda ryari?',
     'title_passengers': 'Hitamo umubare wimyanya',
-    'title_payment': 'Kwishyura no Kwemeza',
+    'title_payment': 'Kwishyura',
     'desc_route': 'Hitamo aho uva n\'aho ujya',
     'desc_agency': 'Hitamo muri sosiyete za bisi ziboneka',
     'desc_schedule': 'Hitamo itariki n\'isaha by\'urugendo',

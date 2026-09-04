@@ -96,21 +96,6 @@ class AppEn {
     'download_ticket': 'Download Ticket',
     'share_ticket': 'Share Ticket',
 
-    // ── Agent ──────────────────────────────────
-    'agent_dashboard': 'Dashboard',
-    'todays_bookings': "Today's Bookings",
-    'pending_tickets': 'Pending Tickets',
-    'assigned_routes': 'Assigned Routes',
-    'confirm_booking': 'Confirm Booking',
-    'reject_booking': 'Reject Booking',
-    'rejection_reason': 'Rejection Reason',
-    'mark_issued': 'Mark as Issued',
-    'unmark_issued': 'Remove Issued Mark',
-    'issued': 'Issued',
-    'all_bookings': 'All Bookings',
-    'booking_requests': 'Booking Requests',
-    'quick_access': 'Quick Access',
-
     // ── Departure Management ───────────────────
     'departure_management': 'Departure Management',
     'blocked': 'Blocked',

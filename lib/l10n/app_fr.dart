@@ -99,21 +99,6 @@ class AppFr {
     'download_ticket': 'Télécharger le billet',
     'share_ticket': 'Partager le billet',
 
-    // ── Agent ──────────────────────────────────
-    'agent_dashboard': 'Tableau de bord',
-    'todays_bookings': "Réservations du jour",
-    'pending_tickets': 'Billets en attente',
-    'assigned_routes': 'Itinéraires assignés',
-    'confirm_booking': 'Confirmer la réservation',
-    'reject_booking': 'Refuser la réservation',
-    'rejection_reason': 'Motif du refus',
-    'mark_issued': 'Marquer comme délivré',
-    'unmark_issued': 'Retirer le marquage délivré',
-    'issued': 'Délivré',
-    'all_bookings': 'Toutes les réservations',
-    'booking_requests': 'Demandes de réservation',
-    'quick_access': 'Accès rapide',
-
     // ── Departure Management ───────────────────
     'departure_management': 'Gestion des départs',
     'blocked': 'Bloqué',

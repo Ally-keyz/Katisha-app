@@ -99,21 +99,6 @@ class AppSw {
     'download_ticket': 'Pakua Tiketi',
     'share_ticket': 'Shiriki Tiketi',
 
-    // ── Agent ──────────────────────────────────
-    'agent_dashboard': 'Dashibodi',
-    'todays_bookings': 'Uhifadhi wa Leo',
-    'pending_tickets': 'Tiketi Zinazosubiri',
-    'assigned_routes': 'Njia Zilizopewa',
-    'confirm_booking': 'Thibitisha Uhifadhi',
-    'reject_booking': 'Kataa Uhifadhi',
-    'rejection_reason': 'Sababu ya Kukataliwa',
-    'mark_issued': 'Weka kama Imetolewa',
-    'unmark_issued': 'Ondoa Alama ya Utoaji',
-    'issued': 'Imetolewa',
-    'all_bookings': 'Uhifadhi Wote',
-    'booking_requests': 'Maombi ya Uhifadhi',
-    'quick_access': 'Ufikiaji wa Haraka',
-
     // ── Departure Management ───────────────────
     'departure_management': 'Usimamizi wa Kuondoka',
     'blocked': 'Imefungwa',

@@ -30,7 +30,7 @@ abstract class SocketService {
   /// Stream of payment confirmation events.
   Stream<Map<String, dynamic>> get onPaymentConfirmed;
 
-  /// Stream of new booking events (for agents).
+  /// Stream of new booking events.
   Stream<Map<String, dynamic>> get onNewBooking;
 
   /// Emits a custom event to the server.
