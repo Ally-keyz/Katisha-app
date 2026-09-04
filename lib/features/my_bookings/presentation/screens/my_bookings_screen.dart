@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -54,6 +55,11 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
     return !travelDate.isBefore(today);
   }
 
+  /// Only issued tickets are shown; nothing else (not even confirmed ones).
+  bool _isIssued(Booking b) {
+    return b.status == 'issued';
+  }
+
   Future<void> _fetchBookings({bool refresh = false}) async {
     if (refresh) {
       setState(() {
@@ -75,7 +81,7 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
         if (!mounted) return;
         final cachedBookings = cached
             .map((json) => Booking.fromJson(json))
-            .where(_isNonExpired)
+            .where((b) => _isIssued(b) && _isNonExpired(b))
             .toList();
         if (cachedBookings.isNotEmpty) {
           setState(() {
@@ -97,7 +103,8 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
         }
       },
       (response) async {
-        final nonExpired = response.bookings.where(_isNonExpired).toList();
+        final nonExpired =
+            response.bookings.where((b) => _isIssued(b) && _isNonExpired(b)).toList();
         setState(() {
           if (_page == 1) {
             _bookings = nonExpired;
@@ -109,14 +116,16 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
           _error = null;
         });
 
-        // Cache each ticket locally so it can be shown offline.
-        final localStore = ref.read(localTicketStoreProvider);
-        for (final booking in response.bookings) {
-          await localStore.cacheBooking(booking.id, _bookingToJson(booking));
-        }
-        // Pre-download ticket images into app-private storage automatically.
-        _preCacheTicketImages(response.bookings);
-        ref.read(badgeCountsProvider.notifier).refresh();
+        // Persist and pre-download tickets in the background so the list
+        // renders immediately instead of blocking on disk writes / downloads.
+        unawaited(() async {
+          final localStore = ref.read(localTicketStoreProvider);
+          for (final booking in response.bookings) {
+            await localStore.cacheBooking(booking.id, _bookingToJson(booking));
+          }
+          _preCacheTicketImages(response.bookings);
+          ref.read(badgeCountsProvider.notifier).refresh();
+        }());
       },
     );
   }
@@ -158,6 +167,7 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
       'status': booking.status,
       'paymentStatus': booking.paymentStatus,
       'paymentMethod': booking.paymentMethod,
+      'ticketImage': booking.ticketImage,
       'agency': booking.agency != null
           ? {'id': booking.agency!.id, 'name': booking.agency!.name}
           : null,
@@ -440,7 +450,6 @@ class _BookingCard extends StatelessWidget {
   const _BookingCard({required this.booking, this.onTap});
 
   void _showTicketModal(BuildContext context) {
-    if (booking.ticketImage == null || booking.ticketImage!.isEmpty) return;
     Navigator.of(context).push(
       PageRouteBuilder(
         opaque: false,
@@ -473,8 +482,7 @@ class _BookingCard extends StatelessWidget {
     final dateStr = booking.travelDate != null
         ? dateFormat.format(booking.travelDate!)
         : '—';
-    final hasImage =
-        booking.ticketImage != null && booking.ticketImage!.isNotEmpty;
+    final isIssued = booking.status == 'issued';
     final status = booking.status;
 
     return Container(
@@ -589,8 +597,8 @@ class _BookingCard extends StatelessWidget {
                   ],
                 ),
 
-                // View Ticket button (only if image exists)
-                if (hasImage) ...[
+                // View Ticket button (issued tickets only)
+                if (isIssued) ...[
                   const SizedBox(height: 14),
                   SizedBox(
                     width: double.infinity,
@@ -828,6 +836,10 @@ class _TicketModalState extends ConsumerState<_TicketModal> {
                                 File(localImagePath),
                                 fit: BoxFit.fitWidth,
                                 alignment: Alignment.topCenter,
+                                cacheWidth: (ticketWidth *
+                                        MediaQuery.of(context)
+                                            .devicePixelRatio)
+                                    .round(),
                                 errorBuilder: (_, __, ___) =>
                                     _buildModalImageLoad(),
                               )

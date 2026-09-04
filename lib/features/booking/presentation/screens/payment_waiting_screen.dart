@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lottie/lottie.dart';
 
 import '../../../../core/network/api_client.dart';
+import '../../../../core/error/failures.dart';
 import '../../../../core/platform/platform_providers.dart';
 import '../../../../core/platform/sound_service.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -55,6 +56,7 @@ class _PaymentWaitingScreenState extends ConsumerState<PaymentWaitingScreen> {
   StreamSubscription<Map<String, dynamic>>? _bookingStatusSub;
   bool _navigated = false;
   bool _cancelling = false;
+  bool _checkInFlight = false;
   String? _error;
   DateTime? _pollStarted;
 
@@ -173,30 +175,48 @@ class _PaymentWaitingScreenState extends ConsumerState<PaymentWaitingScreen> {
   }
 
   Future<void> _checkPaymentStatus() async {
-    if (_navigated) return;
-    // Poll the lightweight status endpoint — much smaller payload than the
-    // full trackBooking endpoint, enabling faster 500ms polling in the first
-    // 10 seconds when quick failures (insufficient funds) resolve.
-    final result = await _repo.trackBookingStatus(widget.referenceCode);
-    if (!mounted || _navigated) return;
+    if (_navigated || _checkInFlight) return;
+    _checkInFlight = true;
+    try {
+      // Poll the lightweight status endpoint — much smaller payload than the
+      // full trackBooking endpoint, enabling faster 500ms polling in the first
+      // 10 seconds when quick failures (insufficient funds) resolve.
+      final result = await _repo.trackBookingStatus(widget.referenceCode);
+      if (!mounted || _navigated) return;
 
-    result.fold(
-      (failure) => setState(() => _error = failure.message),
-      (statusData) {
-        if (statusData.paymentStatus == 'paid') {
-          _onPaymentConfirmed();
-        } else if (statusData.paymentStatus == 'failed' ||
-            statusData.status == 'cancelled') {
-          if (_navigated) return;
-          _navigated = true;
-          _pollTimer?.cancel();
-          _timeoutTimer?.cancel();
-          _paymentSub?.cancel();
-          _bookingStatusSub?.cancel();
-          context.go('/home');
-        }
-      },
-    );
+      result.fold(
+        // A 400 from the status endpoint means the payment already failed
+        // terminally (e.g. insufficient funds) — stop waiting and go to the
+        // failed state instead of staying "pending".
+        (failure) {
+          if (failure is ServerFailure && failure.statusCode == 400) {
+            _failToHome();
+            return;
+          }
+          setState(() => _error = failure.message);
+        },
+        (statusData) {
+          if (statusData.paymentStatus == 'paid') {
+            _onPaymentConfirmed();
+          } else if (statusData.paymentStatus == 'failed' ||
+              statusData.status == 'cancelled') {
+            _failToHome();
+          }
+        },
+      );
+    } finally {
+      _checkInFlight = false;
+    }
+  }
+
+  void _failToHome() {
+    if (_navigated || !mounted) return;
+    _navigated = true;
+    _pollTimer?.cancel();
+    _timeoutTimer?.cancel();
+    _paymentSub?.cancel();
+    _bookingStatusSub?.cancel();
+    context.go('/home');
   }
 
   void _scheduleDepartureAlertsForReference() {

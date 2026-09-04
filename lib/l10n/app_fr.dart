@@ -171,7 +171,7 @@ class AppFr {
     'title_agency': 'Sélectionnez une agence de bus',
     'title_schedule': 'Quand voyagez-vous?',
     'title_passengers': 'Détails du passager',
-    'title_payment': 'Paiement & confirmation',
+    'title_payment': 'Paiement',
     'desc_route': 'Choisissez votre origine et destination',
     'desc_agency': 'Choisissez parmi les agences de bus disponibles',
     'desc_schedule': 'Choisissez votre date et heure de voyage',
@@ -253,6 +253,7 @@ class AppFr {
     'cancel_policy': 'Annulez jusqu’à 24h avant le départ. En retard? Le tarif est perdu.',
     'pay_methods': 'Payez avec MTN MoMo, Airtel Money ou M-Pesa.',
     'guide_link': 'Voir le guide complet et la politique d’annulation',
+    'contact_us': 'Contactez-nous au 0782005076',
 
     // ── Booking Payment ─────────────────────────────
     'fare': 'Tarif',

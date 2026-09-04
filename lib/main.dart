@@ -10,6 +10,11 @@ import 'l10n/app_localizations.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Cap the decoded-image cache so ticket PNGs and UI images can't balloon
+  // memory. ~100 MB of decoded bitmaps is plenty for this app's screens.
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 100 * 1024 * 1024;
+  PaintingBinding.instance.imageCache.maximumSize = 400;
+
   final overrides = await createAppOverrides();
 
   runApp(

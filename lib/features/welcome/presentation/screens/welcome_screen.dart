@@ -25,6 +25,12 @@ class WelcomeScreen extends ConsumerWidget {
             Image.asset(
             'assets/images/welcome.jpg',
             fit: BoxFit.cover,
+            // Decode at screen resolution instead of full file resolution so
+            // this full-bleed image never consumes many MB of decoded memory.
+            cacheWidth:
+                (MediaQuery.of(context).size.width *
+                        MediaQuery.of(context).devicePixelRatio)
+                    .round(),
             errorBuilder: (_, __, ___) => Container(
               color: AppColors.primaryDark,
               child: const Center(

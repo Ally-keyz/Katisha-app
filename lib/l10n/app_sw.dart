@@ -171,7 +171,7 @@ class AppSw {
     'title_agency': 'Chagua shirika la basi',
     'title_schedule': 'Unasafiri lini?',
     'title_passengers': 'Maelezo ya abiria',
-    'title_payment': 'Malipo na kuthibitisha',
+    'title_payment': 'Malipo',
     'desc_route': 'Chagua mahali pa kuanzia na kwenda',
     'desc_agency': 'Chagua kati ya mashirika ya basi yanayopatikana',
     'desc_schedule': 'Chagua tarehe na muda wa safari yako',
@@ -253,6 +253,7 @@ class AppSw {
     'cancel_policy': 'Ghairi hadi saa 24 kabla ya safari. Umechelewa? Fedha hupotea.',
     'pay_methods': 'Lipa kwa MTN MoMo, Airtel Money au M-Pesa.',
     'guide_link': 'Tazama Mwongozo Kamili na Sera ya Kughairi',
+    'contact_us': 'Tupigie kwenye 0782005076',
 
     // ── Booking Payment ─────────────────────────────
     'fare': 'Bei',

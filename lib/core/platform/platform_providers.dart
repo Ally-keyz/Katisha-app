@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -47,11 +49,16 @@ final fileServiceProvider = Provider<FileService>((ref) {
 
 /// Initializes notification service, socket service, and returns proper
 /// Riverpod overrides to inject into ProviderScope.
+///
+/// The notification plugin's initialization (timezone data, channel creation,
+/// permission prompt) is kicked off in the background rather than awaited, so
+/// the first frame / splash screen renders immediately and the app feels fast
+/// to open.
 Future<List<Override>> createAppOverrides() async {
   final plugin = FlutterLocalNotificationsPlugin();
   final prefs = await SharedPreferences.getInstance();
   final notificationService = NotificationServiceImpl(plugin: plugin, prefs: prefs);
-  await notificationService.initialize();
+  unawaited(_initializeNotifications(notificationService));
 
   final localStore = LocalNotificationStore(prefs);
   final localTicketStore = LocalTicketStore(prefs);
@@ -70,6 +77,15 @@ Future<List<Override>> createAppOverrides() async {
       return socketService;
     }),
   ];
+}
+
+/// Runs notification setup in the background so it never blocks app startup.
+Future<void> _initializeNotifications(NotificationServiceImpl service) async {
+  try {
+    await service.initialize();
+  } catch (_) {
+    // Never let background notification setup crash or delay the app.
+  }
 }
 
 /// No-op fallback used when real service isn't initialized.

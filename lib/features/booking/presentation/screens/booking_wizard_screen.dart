@@ -7,8 +7,10 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:lottie/lottie.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/socket_service.dart';
+import '../../../../core/error/failures.dart';
 import '../../../../core/platform/platform_providers.dart'
     hide socketServiceProvider;
+import '../../../../core/platform/ticket_sync_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -122,6 +124,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   String? _paymentFailureReason;
   Timer? _paymentPollTimer;
   Timer? _paymentAbandonTimer;
+  Timer? _postConfirmTimer;
+  bool _paymentVerifyInFlight = false;
 
   late AnimationController _progressAnimController;
   late AnimationController _confirmAnimController;
@@ -179,6 +183,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     _paymentSub?.cancel();
     _paymentPollTimer?.cancel();
     _paymentAbandonTimer?.cancel();
+    _postConfirmTimer?.cancel();
     _autoAdvanceTimer?.cancel();
     super.dispose();
   }
@@ -265,11 +270,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       final agency = data is Map<String, dynamic> ? (data['agency'] as Map<String, dynamic>?) : null;
       final hours = agency?['workingHours'];
       if (hours is List) {
+        if (!mounted) return;
         setState(() {
           _agencyWorkingHours = hours.cast<Map<String, dynamic>>();
         });
       }
     } catch (_) {
+      if (!mounted) return;
       setState(() => _agencyWorkingHours = []);
     }
   }
@@ -564,6 +571,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 accessToken: accessToken,
                 refreshToken: refreshToken,
               );
+          // The user is now logged in — sync their tickets to local storage so
+          // they can be viewed offline.
+          startBackgroundTicketSync(ref);
         }
 
         // Extract booking details from either flat response or nested booking object
@@ -579,6 +589,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         final paymentStatus = bookingObj['paymentStatus'] as String? ?? bookingData['paymentStatus'] as String? ?? 'pending';
         final status = bookingObj['status'] as String? ?? bookingData['status'] as String? ?? 'pending';
         final rejectionReason = bookingObj['rejectionReason'] as String? ?? bookingData['rejectionReason'] as String?;
+
+        // Persist the booking locally right away so it is always available
+        // offline once purchased (internet is guaranteed at this moment).
+        _cacheTicketLocally(bookingId, bookingObj);
 
         // A booking is only truly paid (and the user's ticket ready) once
         // `paymentStatus` is 'paid'. A `status` of 'confirmed' only means the
@@ -600,7 +614,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             _confirmedTicketImage = ticketImg;
           });
           _confirmAnimController.forward();
-          Timer(const Duration(seconds: 3), () {
+          _postConfirmTimer?.cancel();
+          _postConfirmTimer = Timer(const Duration(seconds: 3), () {
             if (mounted) context.go('/my-bookings');
           });
         } else if (status == 'cancelled') {
@@ -668,6 +683,47 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
+  /// Immediately persists a freshly-created booking (JSON + private ticket
+  /// image) to the device. Called while the user is online during purchase so
+  /// the issued ticket is always available to view offline afterwards. When
+  /// [bookingObj] is empty (late payment confirmation) the existing cached
+  /// booking is patched with [patch] fields (e.g. paymentStatus: 'paid')
+  /// instead of being overwritten.
+  Future<void> _cacheTicketLocally(
+    String bookingId,
+    Map<String, dynamic> bookingObj, [
+    String? ticketImage,
+    Map<String, dynamic>? patch,
+  ]) async {
+    if (bookingId.isEmpty) return;
+    final store = ref.read(localTicketStoreProvider);
+    if (bookingObj.isNotEmpty) {
+      try {
+        await store.cacheBooking(bookingId, bookingObj);
+      } catch (_) {}
+    } else if (patch != null && patch.isNotEmpty) {
+      try {
+        final existing = await store.getBooking(bookingId);
+        if (existing != null) {
+          existing.addAll(patch);
+          await store.cacheBooking(bookingId, existing);
+        }
+      } catch (_) {}
+    }
+    final ticketImg =
+        ticketImage ?? (bookingObj['ticketImage'] as String?);
+    if (ticketImg == null || ticketImg.isEmpty) return;
+    if (await store.getTicketImagePath(bookingId) != null) return;
+    try {
+      final api = ref.read(apiClientProvider);
+      final response = await api.downloadBytes(ticketImg);
+      final bytes = response.data;
+      if (bytes is List<int>) {
+        await store.saveTicketImage(bookingId, Uint8List.fromList(bytes));
+      }
+    } catch (_) {}
+  }
+
   void _listenForPayment(String bookingId) {
     try {
       final socketService = ref.read(socketServiceProvider);
@@ -689,20 +745,39 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   Future<void> _verifyPayment() async {
-    // Mirror the web frontend: poll the public track endpoint by reference
-    // code, which actively verifies the pawaPay collection server-side and
-    // flips the booking to paid/failed. Polling by id would only read the
-    // stored status and can stay "processing" forever.
-    final reference = _paymentWaitingReference;
-    if (reference == null || reference.isEmpty) return;
-    final result = await _repo.trackBooking(reference);
-    if (!mounted) return;
-    result.fold(
-      // A fetch/polling error is not a payment failure — keep waiting and let
-      // the next poll + abandon timeout resolve the real outcome.
-      (_) {},
-      _handlePaymentOutcomeFromBooking,
-    );
+    // Never stack polls: if a slow request is still in flight when the next
+    // 1s tick fires, skip it so we don't open many parallel requests.
+    if (_paymentVerifyInFlight) return;
+    _paymentVerifyInFlight = true;
+    try {
+      // Mirror the web frontend: poll the public track endpoint by reference
+      // code, which actively verifies the pawaPay collection server-side and
+      // flips the booking to paid/failed. Polling by id would only read the
+      // stored status and can stay "processing" forever.
+      final reference = _paymentWaitingReference;
+      if (reference == null || reference.isEmpty) return;
+      final result = await _repo.trackBooking(reference);
+      if (!mounted) return;
+      result.fold(
+        // A 400 from the track endpoint is a terminal payment failure (e.g.
+        // insufficient funds) — treat it like `paymentStatus: 'failed'` and go
+        // straight to the failure screen instead of staying "pending". Any
+        // other polling error is transient and we keep waiting.
+        (failure) {
+          if (failure is ServerFailure && failure.statusCode == 400) {
+            _handlePaymentOutcome(
+              paid: false,
+              bookingId: _paymentWaitingBookingId ?? '',
+              referenceCode: reference,
+              reason: failure.message,
+            );
+          }
+        },
+        _handlePaymentOutcomeFromBooking,
+      );
+    } finally {
+      _paymentVerifyInFlight = false;
+    }
   }
 
   /// Routes a fetched [Booking] to its correct terminal state (paid or failed).
@@ -757,6 +832,17 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     if (paid) {
       ref.read(soundServiceProvider).vibrate();
       _scheduleDepartureAlerts(bookingId);
+      // Keep the (now paid) ticket fully available offline — the booking JSON
+      // was cached at creation, so mark it paid and save the image while we
+      // still have internet.
+      if (ticketImage != null && ticketImage.isNotEmpty) {
+        _cacheTicketLocally(
+          bookingId,
+          const <String, dynamic>{},
+          ticketImage,
+          const {'paymentStatus': 'paid'},
+        );
+      }
       ref.read(localNotificationStoreProvider).add(
             title: 'Payment Confirmed!',
             message:
@@ -771,7 +857,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         _confirmedTicketImage = ticketImage;
       });
       _confirmAnimController.forward();
-      Timer(const Duration(seconds: 3), () {
+      _postConfirmTimer?.cancel();
+      _postConfirmTimer = Timer(const Duration(seconds: 3), () {
         if (mounted) context.go('/my-bookings');
       });
     } else {
@@ -823,33 +910,47 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       var terminal = false;
       if (reference != null && reference.isNotEmpty) {
         final result = await _repo.trackBooking(reference);
-        if (result.isRight()) {
-          final b = result.getOrElse(() => throw StateError('unreachable'));
-          if (b.paymentStatus == 'paid') {
-            _handlePaymentOutcome(
-              paid: true,
-              bookingId: b.id.isNotEmpty ? b.id : (bookingId ?? ''),
-              referenceCode: b.referenceCode,
-            );
-            terminal = true;
-          } else if (b.paymentStatus == 'failed') {
-            _handlePaymentOutcome(
-              paid: false,
-              bookingId: b.id.isNotEmpty ? b.id : (bookingId ?? ''),
-              referenceCode: b.referenceCode,
-              reason: b.rejectionReason,
-            );
-            terminal = true;
-          } else if (b.status == 'cancelled') {
-            _handlePaymentOutcome(
-              paid: false,
-              bookingId: b.id.isNotEmpty ? b.id : (bookingId ?? ''),
-              referenceCode: b.referenceCode,
-              cancelled: true,
-            );
-            terminal = true;
-          }
-        }
+        result.fold(
+          // Same rule as the poller: 400 means the payment already failed
+          // terminally (e.g. insufficient funds) — fail immediately.
+          (failure) {
+            if (failure is ServerFailure && failure.statusCode == 400) {
+              _handlePaymentOutcome(
+                paid: false,
+                bookingId: bookingId ?? '',
+                referenceCode: reference,
+                reason: failure.message,
+              );
+              terminal = true;
+            }
+          },
+          (b) {
+            if (b.paymentStatus == 'paid') {
+              _handlePaymentOutcome(
+                paid: true,
+                bookingId: b.id.isNotEmpty ? b.id : (bookingId ?? ''),
+                referenceCode: b.referenceCode,
+              );
+              terminal = true;
+            } else if (b.paymentStatus == 'failed') {
+              _handlePaymentOutcome(
+                paid: false,
+                bookingId: b.id.isNotEmpty ? b.id : (bookingId ?? ''),
+                referenceCode: b.referenceCode,
+                reason: b.rejectionReason,
+              );
+              terminal = true;
+            } else if (b.status == 'cancelled') {
+              _handlePaymentOutcome(
+                paid: false,
+                bookingId: b.id.isNotEmpty ? b.id : (bookingId ?? ''),
+                referenceCode: b.referenceCode,
+                cancelled: true,
+              );
+              terminal = true;
+            }
+          },
+        );
       }
       if (terminal || !mounted) return;
       // Still not paid after 40s — abandon to release the seat and fail.
@@ -2662,22 +2763,51 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       ),
       child: Column(
         children: [
-          _buildFooterItem(
-            Icons.block,
-            l10n.translate('cancel_policy'),
-          ),
+          _buildContactItem(l10n),
           const SizedBox(height: 6),
           _buildFooterItem(
             Icons.phone_android,
             l10n.translate('pay_methods'),
           ),
-          const SizedBox(height: 6),
-          _buildFooterItem(
-            Icons.info_outline,
-            l10n.translate('guide_link'),
-          ),
         ],
       ),
+    );
+  }
+
+  /// Contact row with the phone number emphasized (bold, blue, larger).
+  Widget _buildContactItem(AppLocalizations l10n) {
+    final text = l10n.translate('contact_us');
+    const number = '0782005076';
+    final parts = text.split(number);
+    return Row(
+      children: [
+        const Icon(Icons.phone_rounded, size: 16, color: AppColors.primary),
+        const SizedBox(width: 8),
+        Expanded(
+          child: RichText(
+            text: TextSpan(
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.textSub,
+                fontSize: 13,
+              ),
+              children: parts.length == 2
+                  ? [
+                      TextSpan(text: parts[0]),
+                      TextSpan(
+                        text: number,
+                        style: AppTypography.bodyMedium.copyWith(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15,
+                        ),
+                      ),
+                      TextSpan(text: parts[1]),
+                    ]
+                  : [TextSpan(text: text)],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -2805,6 +2935,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       height: 300,
                       width: double.infinity,
                       fit: BoxFit.fitWidth,
+                      memCacheWidth: (MediaQuery.of(context).size.width *
+                              MediaQuery.of(context).devicePixelRatio)
+                          .round(),
                       placeholder: (_, __) => const SizedBox(
                         width: 24,
                         height: 24,

@@ -349,11 +349,19 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
     final localPath = _localImagePath;
     final remote = _imageUrl;
 
+    // Decode the ticket at display resolution so a full-page PNG ticket never
+    // occupies many MB of decoded memory.
+    final decodeWidth =
+        (MediaQuery.of(context).size.width *
+                MediaQuery.of(context).devicePixelRatio)
+            .round();
+
     if (localPath != null && localPath.isNotEmpty) {
       return Image.file(
         File(localPath),
         width: double.infinity,
         fit: BoxFit.fitWidth,
+        cacheWidth: decodeWidth,
         errorBuilder: (_, __, ___) => _buildQrFallback(),
       );
     }
@@ -363,6 +371,7 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
         imageUrl: remote,
         width: double.infinity,
         fit: BoxFit.fitWidth,
+        memCacheWidth: decodeWidth,
         placeholder: (_, __) => const SizedBox(
           height: 200,
           child: Center(

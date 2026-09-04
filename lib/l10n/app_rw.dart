@@ -77,7 +77,7 @@ class AppRw {
     'continue_btn': 'Komeza',
     'booking_confirmed': 'Uburyo Bwemejwe!',
     'booking_reference': 'Inomero y\'Uburyo',
-    'view_ticket': 'Reba Ikirata',
+    'view_ticket': 'Reba Itike',
     'keep_waiting': 'Inda',
     'check_your_phone': 'Reba telefone yawe',
     'payment_instructions': 'Uzuza ubwishyu kuri telefone yawe',
@@ -116,10 +116,10 @@ class AppRw {
     'cancelled_successfully': 'Uburyo bwahagaritswe neza.',
 
     // ── Ticket ─────────────────────────────────
-    'electronic_ticket': 'IKIRATA CY\'INTERANETI',
-    'ticket_number': 'Inomero y\'Ikirata',
-    'download_ticket': 'Kurura Ikirata',
-    'share_ticket': 'Sangira Ikirata',
+    'electronic_ticket': 'Itike CY\'INTERANETI',
+    'ticket_number': 'Inomero y\'Itike',
+    'download_ticket': 'Kurura Itike',
+    'share_ticket': 'Sangira Itike',
 
     // ── Departure Management ───────────────────
     'departure_management': 'Kugenzura Guhagarara',
@@ -182,8 +182,8 @@ class AppRw {
     'east_africa_desc': 'Jya muri Kenya, Uganda, Tanzaniya n\'ibindi bihugu',
 
     // ── Booking Wizard Steps ─────────────────────
-    'booking_title': 'Tegura Ikirata cy\'Ibisi',
-    'booking_subtitle': 'Uzuza amakuru y\'urugendo rwawe kugira ngo ubone ikirata cyawe.',
+    'booking_title': 'Tegura Itike cy\'Ibisi',
+    'booking_subtitle': 'Uzuza amakuru y\'urugendo rwawe kugira ngo ubone Itike cyawe.',
     'step_route': 'Inzira',
     'step_agency': 'Sosiyete',
     'step_schedule': 'Igihe',
@@ -255,6 +255,7 @@ class AppRw {
     'cancel_policy': 'Hagarika nibura amasaha 24 mbere y\'urugendo. Utinze? Amafaranga arahomba.',
     'pay_methods': 'Ishyura ukoresheje MTN MoMo, Airtel Money cyangwa M-Pesa.',
     'guide_link': 'Reba Ubuyobozi Bwuzuye n\'Uburyo bwo Guhagarika',
+    'contact_us': 'duhamagare kuri 0782005076',
 
     // ── Booking Payment ─────────────────────────────
     'fare': 'Igiciro',
@@ -294,8 +295,8 @@ class AppRw {
     'login_to_see': 'Nyamuneka winjire kugira ngo urebe urugendo rwawe.',
 
     // ── Ticket View ──────────────────────────────
-    'my_ticket': 'Ikirata Cyanjyewe',
-    'digital_travel_pass': 'Ikadiri y\'Urugendo rwa elegitoroniki',
+    'my_ticket': 'Itike Cyanjyewe',
+    'digital_travel_pass': 'Itike y\'Urugendo rwa elegitoroniki',
     'reference': 'Inomero',
     'date': 'Itariki',
     'time': 'Isaha',
