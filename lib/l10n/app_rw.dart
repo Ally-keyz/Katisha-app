@@ -206,7 +206,7 @@ class AppRw {
     'step_passengers': 'Hitamo umubare wimyanya',
     'step_payment': 'Ubwishyu',
     'title_route': 'Ujya he?',
-    'title_agency': 'Hitamo sosiyete ya bisi',
+    'title_agency': 'Hitamo agency ushaka',
     'title_schedule': 'Urashaka kugenda ryari?',
     'title_passengers': 'Hitamo umubare wimyanya',
     'title_payment': 'Kwishyura no Kwemeza',

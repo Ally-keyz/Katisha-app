@@ -1417,7 +1417,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       children: [
         const SizedBox(height: AppSpacing.lg),
         Text(
-          'Select a bus agency',
+          l10n.translate('title_agency'),
           style: AppTypography.headlineLarge,
         ),
         const SizedBox(height: AppSpacing.sm),
@@ -2253,7 +2253,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             ),
             const SizedBox(width: AppSpacing.md),
             Text(
-              'Payment & confirm',
+              l10n.translate('title_payment'),
               style: AppTypography.headlineLarge,
             ),
           ],
