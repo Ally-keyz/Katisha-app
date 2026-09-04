@@ -70,6 +70,7 @@ class AppSw {
     'total_amount': 'Jumla ya Kiasi',
     'system_fee': 'Ada ya Huduma',
     'booking_reference': 'Nambari ya Kumbukumbu',
+    'view_ticket': 'Angalia Tiketi',
     'check_your_phone': 'Angalia Simu Yako',
     'payment_instructions': 'Kamilisha malipo kwenye simu yako',
     'seat_available': 'Inapatikana',

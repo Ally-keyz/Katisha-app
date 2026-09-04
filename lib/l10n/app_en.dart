@@ -67,6 +67,7 @@ class AppEn {
     'total_amount': 'Total Amount',
     'system_fee': 'Service Fee',
     'booking_reference': 'Booking Reference',
+    'view_ticket': 'View Ticket',
     'check_your_phone': 'Check Your Phone',
     'payment_instructions': 'Complete the payment on your phone',
     'seat_available': 'Available',

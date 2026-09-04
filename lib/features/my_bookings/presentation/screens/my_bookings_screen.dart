@@ -389,6 +389,7 @@ class _BookingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context);
     final dateFormat = DateFormat('EEE, d MMM yyyy');
     final dateStr = booking.travelDate != null
         ? dateFormat.format(booking.travelDate!)
@@ -517,7 +518,7 @@ class _BookingCard extends StatelessWidget {
                     child: OutlinedButton.icon(
                       onPressed: () => _showTicketModal(context),
                       icon: const Icon(Icons.qr_code_rounded, size: 15),
-                      label: const Text('View Ticket'),
+                      label: Text(l10n.translate('view_ticket')),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.primary,
                         side: BorderSide(

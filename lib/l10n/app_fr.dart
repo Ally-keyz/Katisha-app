@@ -70,6 +70,7 @@ class AppFr {
     'total_amount': 'Montant total',
     'system_fee': 'Frais de service',
     'booking_reference': 'Référence de réservation',
+    'view_ticket': 'Voir le billet',
     'check_your_phone': 'Vérifiez votre téléphone',
     'payment_instructions': 'Effectuez le paiement sur votre téléphone',
     'seat_available': 'Disponible',
