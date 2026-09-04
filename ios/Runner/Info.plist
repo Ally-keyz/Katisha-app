@@ -53,23 +53,6 @@
 		<!-- Notification usage description -->
 		<key>NSUserNotificationUsageDescription</key>
 		<string>Katisha needs notification permission to send you journey alerts and booking updates.</string>
-		<!-- Bluetooth printing -->
-		<key>NSBluetoothAlwaysUsageDescription</key>
-		<string>Katisha needs Bluetooth access to print pickup lists and tickets.</string>
-		<!-- Local network (WiFi printing) -->
-		<key>NSLocalNetworkUsageDescription</key>
-		<string>Katisha needs local network access to discover and communicate with printers.</string>
-		<key>NSBonjourServices</key>
-		<array>
-			<string>_ipp._tcp</string>
-			<string>_ipps._tcp</string>
-			<string>_cups._tcp</string>
-			<string>_uscans._tcp</string>
-			<string>_uscans2._tcp</string>
-		</array>
-		<!-- Camera (for future QR/barcode scanning) -->
-		<key>NSCameraUsageDescription</key>
-		<string>Katisha needs camera access to scan QR codes on tickets.</string>
 		<!-- Google Sign-In URL scheme -->
 		<key>CFBundleURLTypes</key>
 		<array>
@@ -80,10 +63,12 @@
 				</array>
 			</dict>
 		</array>
-		<!-- App Transport Security (allow backend API) -->
+		<!-- App Transport Security (HTTPS only - no arbitrary loads) -->
 		<key>NSAppTransportSecurity</key>
 		<dict>
 			<key>NSAllowsArbitraryLoads</key>
+			<false/>
+			<key>NSAllowsLocalNetworking</key>
 			<true/>
 		</dict>
 		<key>UIStatusBarHidden</key>

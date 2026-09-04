@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Keystore and signing properties (SECRET - do not commit)
+android/key.properties
+android/app/katisha-release.jks
+android/app/*.keystore

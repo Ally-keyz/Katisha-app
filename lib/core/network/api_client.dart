@@ -1,12 +1,12 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../error/failures.dart';
 
-/// Keys used to persist auth tokens locally.
-const String kAccessTokenKey = 'vdk_access_token';
-const String kRefreshTokenKey = 'vdk_refresh_token';
+/// Keys used to persist auth tokens locally (stored in secure storage).
+const String kAccessTokenKey = 'katisha_access_token';
+const String kRefreshTokenKey = 'katisha_refresh_token';
 
 /// Provider for the API client singleton.
 final apiClientProvider = Provider<ApiClient>((ref) {
@@ -19,6 +19,7 @@ final apiClientProvider = Provider<ApiClient>((ref) {
 /// refresh on 401, and common error mapping.
 class ApiClient {
   late final Dio _dio;
+  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
   String? _accessToken;
   String? _refreshToken;
   bool _isRefreshing = false;
@@ -29,8 +30,8 @@ class ApiClient {
         'API_BASE_URL',
         defaultValue: 'https://api.katisha.today/api',
       ),
-      connectTimeout: const Duration(seconds: 45),
-      receiveTimeout: const Duration(seconds: 60),
+      connectTimeout: const Duration(seconds: 10),
+      receiveTimeout: const Duration(seconds: 20),
       headers: {'Content-Type': 'application/json'},
     ));
 
@@ -39,32 +40,29 @@ class ApiClient {
       onResponse: _onResponse,
       onError: _onError,
     ));
-    debugPrint('[API] baseUrl=${_dio.options.baseUrl}');
+    if (kDebugMode) debugPrint('[API] baseUrl=${_dio.options.baseUrl}');
   }
 
   /// Load persisted tokens into memory on app startup.
   Future<void> init() async {
-    final prefs = await SharedPreferences.getInstance();
-    _accessToken = prefs.getString(kAccessTokenKey);
-    _refreshToken = prefs.getString(kRefreshTokenKey);
+    _accessToken = await _secureStorage.read(key: kAccessTokenKey);
+    _refreshToken = await _secureStorage.read(key: kRefreshTokenKey);
   }
 
-  /// Persist tokens both in memory and on disk.
+  /// Persist tokens both in memory and on disk (secure storage).
   Future<void> setTokens({required String accessToken, required String refreshToken}) async {
     _accessToken = accessToken;
     _refreshToken = refreshToken;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(kAccessTokenKey, accessToken);
-    await prefs.setString(kRefreshTokenKey, refreshToken);
+    await _secureStorage.write(key: kAccessTokenKey, value: accessToken);
+    await _secureStorage.write(key: kRefreshTokenKey, value: refreshToken);
   }
 
   /// Clear all stored tokens (logout).
   Future<void> clearTokens() async {
     _accessToken = null;
     _refreshToken = null;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(kAccessTokenKey);
-    await prefs.remove(kRefreshTokenKey);
+    await _secureStorage.delete(key: kAccessTokenKey);
+    await _secureStorage.delete(key: kRefreshTokenKey);
   }
 
   String? get accessToken => _accessToken;
@@ -120,7 +118,7 @@ class ApiClient {
   // ── Interceptors ──────────────────────────────────────────────────────
 
   void _onRequest(RequestOptions options, RequestInterceptorHandler handler) {
-    debugPrint('[API] → ${options.method} ${options.uri}');
+    if (kDebugMode) debugPrint('[API] → ${options.method} ${options.uri}');
     if (_accessToken != null && _accessToken!.isNotEmpty) {
       options.headers['Authorization'] = 'Bearer $_accessToken';
     }
@@ -128,7 +126,7 @@ class ApiClient {
   }
 
   void _onResponse(Response response, ResponseInterceptorHandler handler) {
-    debugPrint('[API] ← ${response.statusCode} ${response.requestOptions.method} ${response.requestOptions.uri}');
+    if (kDebugMode) debugPrint('[API] ← ${response.statusCode} ${response.requestOptions.method} ${response.requestOptions.uri}');
     // Unwrap the { ok, message, data } envelope so all callers can read
     // response.data['user'] directly without knowing about the wrapper.
     final body = response.data;
@@ -147,7 +145,7 @@ class ApiClient {
   }
 
   Future<void> _onError(DioException err, ErrorInterceptorHandler handler) async {
-    debugPrint('[API] ✖ ${err.type} ${err.requestOptions.method} ${err.requestOptions.uri} → ${err.message}');
+    if (kDebugMode) debugPrint('[API] ✖ ${err.type} ${err.requestOptions.method} ${err.requestOptions.uri} → ${err.message}');
     if (err.response?.statusCode == 401 && !_isRefreshing) {
       final refreshed = await _attemptTokenRefresh();
       if (refreshed) {
@@ -168,8 +166,8 @@ class ApiClient {
     _isRefreshing = true;
     try {
       final response = await Dio(BaseOptions(
-        connectTimeout: const Duration(seconds: 45),
-        receiveTimeout: const Duration(seconds: 60),
+        connectTimeout: const Duration(seconds: 10),
+        receiveTimeout: const Duration(seconds: 20),
       )).post(
         '${_dio.options.baseUrl}/auth/refresh-token',
         data: {'refreshToken': _refreshToken},
@@ -194,14 +192,14 @@ class ApiClient {
 
   /// Maps a [DioException] to a domain-level [Failure].
   static Failure mapDioError(DioException e) {
-    debugPrint('[API] mapDioError: type=${e.type} uri=${e.requestOptions.uri} message=${e.message}');
+    if (kDebugMode) debugPrint('[API] mapDioError: type=${e.type} uri=${e.requestOptions.uri} message=${e.message}');
     if (e.type == DioExceptionType.connectionTimeout ||
         e.type == DioExceptionType.sendTimeout ||
         e.type == DioExceptionType.receiveTimeout) {
-      return TimeoutFailure('Request timed out connecting to ${e.requestOptions.uri}');
+      return TimeoutFailure('The request timed out. Please check your connection and try again.');
     }
     if (e.type == DioExceptionType.connectionError) {
-      return NetworkFailure('Cannot reach server at ${e.requestOptions.uri}. Make sure your phone and PC are on the same WiFi network.');
+      return NetworkFailure('Unable to reach Katisha servers. Please check your internet connection and try again.');
     }
     final statusCode = e.response?.statusCode;
     final message = _extractErrorMessage(e.response?.data);

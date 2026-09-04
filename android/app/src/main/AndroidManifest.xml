@@ -9,24 +9,14 @@
     <!-- Local notification scheduling (alarms) -->
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
-    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
 
-    <!-- Bluetooth printing (Android 12+) -->
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"/>
-
-    <!-- Internet (required for all API calls, WiFi printing) -->
+    <!-- Internet (required for all API calls) -->
     <uses-permission android:name="android.permission.INTERNET"/>
-
-    <!-- Camera (for future QR/barcode scanning) -->
-    <uses-permission android:name="android.permission.CAMERA"/>
 
     <application
         android:label="Katisha"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/network_security_config"
         tools:ignore="Instantiatable">
 
@@ -48,15 +38,6 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-
-        <!-- FCM push notification service -->
-        <service
-            android:name=".MyFirebaseMessagingService"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT"/>
-            </intent-filter>
-        </service>
 
         <!-- Flutter background messaging -->
         <service
