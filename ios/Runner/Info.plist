@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+	<dict>
+		<key>CFBundleDevelopmentRegion</key>
+		<string>$(DEVELOPMENT_LANGUAGE)</string>
+		<key>CFBundleDisplayName</key>
+		<string>Katisha</string>
+		<key>CFBundleExecutable</key>
+		<string>$(EXECUTABLE_NAME)</string>
+		<key>CFBundleIdentifier</key>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+		<key>CFBundleInfoDictionaryVersion</key>
+		<string>6.0</string>
+		<key>CFBundleName</key>
+		<string>katisha</string>
+		<key>CFBundlePackageType</key>
+		<string>APPL</string>
+		<key>CFBundleShortVersionString</key>
+		<string>$(FLUTTER_BUILD_NAME)</string>
+		<key>CFBundleSignature</key>
+		<string>????</string>
+		<key>CFBundleVersion</key>
+		<string>$(FLUTTER_BUILD_NUMBER)</string>
+		<key>LSRequiresIPhoneOS</key>
+		<true/>
+		<key>UILaunchStoryboardName</key>
+		<string>LaunchScreen</string>
+		<key>UIMainStoryboardFile</key>
+		<string>Main</string>
+		<key>UISupportedInterfaceOrientations</key>
+		<array>
+			<string>UIInterfaceOrientationPortrait</string>
+		</array>
+		<key>UISupportedInterfaceOrientations~ipad</key>
+		<array>
+			<string>UIInterfaceOrientationPortrait</string>
+			<string>UIInterfaceOrientationPortraitUpsideDown</string>
+			<string>UIInterfaceOrientationLandscapeLeft</string>
+			<string>UIInterfaceOrientationLandscapeRight</string>
+		</array>
+		<key>CADisableMinimumFrameDurationOnPhone</key>
+		<true/>
+		<key>UIApplicationSupportsIndirectInputEvents</key>
+		<true/>
+		<!-- ── Permissions ───────────────────────────────────────── -->
+		<!-- Push notifications (APNs) -->
+		<key>UIBackgroundModes</key>
+		<array>
+			<string>remote-notification</string>
+			<string>fetch</string>
+		</array>
+		<!-- Notification usage description -->
+		<key>NSUserNotificationUsageDescription</key>
+		<string>Katisha needs notification permission to send you journey alerts and booking updates.</string>
+		<!-- Bluetooth printing -->
+		<key>NSBluetoothAlwaysUsageDescription</key>
+		<string>Katisha needs Bluetooth access to print pickup lists and tickets.</string>
+		<!-- Local network (WiFi printing) -->
+		<key>NSLocalNetworkUsageDescription</key>
+		<string>Katisha needs local network access to discover and communicate with printers.</string>
+		<key>NSBonjourServices</key>
+		<array>
+			<string>_ipp._tcp</string>
+			<string>_ipps._tcp</string>
+			<string>_cups._tcp</string>
+			<string>_uscans._tcp</string>
+			<string>_uscans2._tcp</string>
+		</array>
+		<!-- Camera (for future QR/barcode scanning) -->
+		<key>NSCameraUsageDescription</key>
+		<string>Katisha needs camera access to scan QR codes on tickets.</string>
+		<!-- Google Sign-In URL scheme -->
+		<key>CFBundleURLTypes</key>
+		<array>
+			<dict>
+				<key>CFBundleURLSchemes</key>
+				<array>
+					<string>com.googleusercontent.apps.529626911266-1rhgd10l0r7bjq57ednn1o0r6tqev8a9</string>
+				</array>
+			</dict>
+		</array>
+		<!-- App Transport Security (allow backend API) -->
+		<key>NSAppTransportSecurity</key>
+		<dict>
+			<key>NSAllowsArbitraryLoads</key>
+			<true/>
+		</dict>
+		<key>UIStatusBarHidden</key>
+		<true/>
+		<key>UIViewControllerBasedStatusBarAppearance</key>
+		<false/>
+	</dict>
+</plist>

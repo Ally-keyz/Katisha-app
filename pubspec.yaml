@@ -1,0 +1,109 @@
+name: katisha
+description: "Katisha - Bus Ticket Booking Mobile Application"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.4
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # UI
+  cupertino_icons: ^1.0.8
+  flutter_svg: ^2.0.10+1
+  lottie: ^3.3.1
+  cached_network_image: ^3.4.1
+  shimmer: ^3.0.0
+  flutter_animate: ^4.5.2
+  google_fonts: ^6.2.1
+
+  # State Management
+  flutter_riverpod: ^2.6.1
+  riverpod_annotation: ^2.6.1
+
+  # Routing
+  go_router: ^14.8.1
+
+  # Network
+  dio: ^5.7.0
+  socket_io_client: ^3.0.2
+
+  # Storage
+  shared_preferences: ^2.3.4
+  flutter_secure_storage: ^9.2.4
+  sqflite: ^2.4.1
+  path: ^1.9.0
+
+  # Auth & Security
+  jwt_decoder: ^2.0.1
+
+  # Notifications
+  flutter_local_notifications: ^18.0.1
+  audioplayers: ^6.1.0
+  # Firebase — uncomment once google-services.json / GoogleService-Info.plist are added
+  # firebase_core: ^3.8.1
+  # firebase_messaging: ^15.1.6
+
+  # Utilities
+  intl: ^0.20.1
+  equatable: ^2.0.7
+  dartz: ^0.10.1
+  uuid: ^4.5.1
+  url_launcher: ^6.3.1
+  share_plus: ^10.1.4
+  path_provider: ^2.1.5
+
+  # Printing
+  printing: ^5.13.4
+  pdf: ^3.11.2
+
+  # QR Code
+  qr_flutter: ^4.1.0
+
+  # Timezone (for scheduled notifications)
+  timezone: ^0.10.1
+
+dependency_overrides:
+  jni: 1.0.3
+  jni_flutter: 1.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  build_runner: ^2.4.14
+  riverpod_generator: ^2.6.2
+  custom_lint: ^0.7.5
+  riverpod_lint: ^2.6.2
+  flutter_native_splash: ^2.4.3
+  flutter_launcher_icons: ^0.14.3
+
+flutter_native_splash:
+  color: "#1D4ED8"
+  android_12:
+    color: "#1D4ED8"
+  ios: true
+  android: true
+  fullscreen: true
+  web: false
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: assets/images/app_icon.png
+  adaptive_icon_background: "#1D4ED8"
+  adaptive_icon_foreground: assets/images/app_icon_foreground.png
+  remove_alpha_ios: true
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/lottie/
+    - assets/images/
+    - assets/icons/
+    - assets/sounds/
