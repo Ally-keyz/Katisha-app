@@ -15,6 +15,8 @@ class KatishaAppBar extends StatelessWidget implements PreferredSizeWidget {
   final PreferredSizeWidget? bottom;
   final List<Widget>? extraActions;
   final int unreadCount;
+  final bool showLottie;
+  final bool showBell;
 
   const KatishaAppBar({
     super.key,
@@ -24,6 +26,8 @@ class KatishaAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.bottom,
     this.extraActions,
     this.unreadCount = 0,
+    this.showLottie = true,
+    this.showBell = true,
   });
 
   @override
@@ -43,53 +47,55 @@ class KatishaAppBar extends StatelessWidget implements PreferredSizeWidget {
       ),
       actions: [
         if (extraActions != null) ...extraActions!,
-        // Center Lottie bus animation
-        SizedBox(
-          width: 48,
-          height: 48,
-          child: Center(
-            child: Lottie.asset(
-              'assets/lottie/bus.json',
-              height: 36,
-              width: 36,
-              repeat: true,
+        if (showLottie)
+          // Center Lottie bus animation
+          SizedBox(
+            width: 48,
+            height: 48,
+            child: Center(
+              child: Lottie.asset(
+                'assets/lottie/bus.json',
+                height: 36,
+                width: 36,
+                repeat: true,
+              ),
             ),
           ),
-        ),
-        // Notification bell with badge
-        Stack(
-          clipBehavior: Clip.none,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.notifications_outlined, color: AppColors.text),
-              onPressed: () => context.push('/notifications'),
-            ),
-            if (unreadCount > 0)
-              Positioned(
-                right: 6,
-                top: 6,
-                child: Container(
-                  padding: const EdgeInsets.all(4),
-                  constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                  decoration: const BoxDecoration(
-                    color: AppColors.error,
-                    shape: BoxShape.circle,
-                  ),
-                  child: Center(
-                    child: Text(
-                      unreadCount > 99 ? '99+' : '$unreadCount',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        height: 1,
+        if (showBell)
+          // Notification bell with badge
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              IconButton(
+                icon: const Icon(Icons.notifications_outlined, color: AppColors.text),
+                onPressed: () => context.push('/notifications'),
+              ),
+              if (unreadCount > 0)
+                Positioned(
+                  right: 6,
+                  top: 6,
+                  child: Container(
+                    padding: const EdgeInsets.all(4),
+                    constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                    decoration: const BoxDecoration(
+                      color: AppColors.error,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        unreadCount > 99 ? '99+' : '$unreadCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          height: 1,
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
-          ],
-        ),
+            ],
+          ),
         const SizedBox(width: 4),
       ],
       bottom: bottom,

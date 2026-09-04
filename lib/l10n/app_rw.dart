@@ -101,11 +101,13 @@ class AppRw {
     'enter_phone_payment': 'Telefone yo kwishura',
 
     // ── My Bookings ────────────────────────────
-    'my_bookings': 'Uburyo Banje',
+    'my_bookings': 'Amaticket yawe',
     'make_booking': 'Kugura Tiketi',
     'active_bookings': 'Birimo',
     'past_bookings': 'Bibaye',
-    'no_bookings': 'Nta buryo ufise.',
+    'no_bookings': 'Ntamaticket abanonetse',
+    'no_tickets_subtitle': 'Gura itike yawe ya mbere n\'amaticket yawe azaboneka hano',
+    'book_your_ticket': 'Gura itike',
     'track_booking': 'Kurikirana Uburyo',
     'reference_code': 'Inomero',
     'booking_status': 'Imimerere',
@@ -152,9 +154,9 @@ class AppRw {
     'pickup_manifest': 'Inyandiko y\'Ukwakira',
 
     // ── Notifications ──────────────────────────
-    'notifications': 'Amakuru',
+    'notifications': 'Notifications',
     'no_notifications': 'Nta makuru ahari.',
-    'mark_all_read': 'Soma Vyose',
+    'mark_all_read': 'Soma byose',
     'journey_alert': 'Amabwiriza y\'Urugendo',
     'journey_starts_soon': 'Urugendo rwawe rutangira mu minota 20',
     'snooze': 'Ahantu hejuru minota 5',
@@ -201,12 +203,12 @@ class AppRw {
     'step_route': 'Inzira',
     'step_agency': 'Sosiyete',
     'step_schedule': 'Igihe',
-    'step_passengers': 'Abagenzi',
+    'step_passengers': 'Hitamo umubare wimyanya',
     'step_payment': 'Ubwishyu',
     'title_route': 'Ujya he?',
     'title_agency': 'Hitamo sosiyete ya bisi',
-    'title_schedule': 'Urashaka gugenda ryari?',
-    'title_passengers': 'Amakuru y\'umugenzi',
+    'title_schedule': 'Urashaka kugenda ryari?',
+    'title_passengers': 'Hitamo umubare wimyanya',
     'title_payment': 'Kwishyura no Kwemeza',
     'desc_route': 'Hitamo aho uva n\'aho ujya',
     'desc_agency': 'Hitamo muri sosiyete za bisi ziboneka',
@@ -343,7 +345,7 @@ class AppRw {
 
     // ── Navigation ─────────────────────────────────
     'nav_home': 'Ahabanza',
-    'nav_my_tickets': 'Ticket zanjye',
+    'nav_my_tickets': 'Ticket zawe',
     'nav_alerts': 'Notifications',
   };
 }

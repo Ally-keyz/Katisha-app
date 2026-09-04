@@ -267,19 +267,19 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
               ),
             ),
             const SizedBox(height: 20),
-            const Text(
-              'No tickets yet',
-              style: TextStyle(
+            Text(
+              l10n.translate('no_bookings'),
+              style: const TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
                 color: Color(0xFF111827),
               ),
             ),
             const SizedBox(height: 6),
-            const Text(
-              'Book your first trip and your tickets will appear here',
+            Text(
+              l10n.translate('no_tickets_subtitle'),
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 13,
                 color: Color(0xFF9CA3AF),
                 height: 1.5,
@@ -297,7 +297,7 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-                child: Text(l10n.translate('make_booking')),
+                child: Text(l10n.translate('book_your_ticket')),
               ),
             ),
           ],

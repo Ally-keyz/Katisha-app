@@ -147,6 +147,8 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       backgroundColor: AppColors.white,
       appBar: KatishaAppBar(
         title: l10n.translate('notifications'),
+        showLottie: false,
+        showBell: false,
         extraActions: [
           if (_unreadCount > 0)
             TextButton(

@@ -1828,7 +1828,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       children: [
         const SizedBox(height: AppSpacing.lg),
         Text(
-          'When do you travel?',
+          l10n.translate('title_schedule'),
           style: AppTypography.headlineLarge,
         ),
         const SizedBox(height: AppSpacing.sm),
@@ -2130,7 +2130,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       children: [
         const SizedBox(height: AppSpacing.lg),
         Text(
-          'Passenger details',
+          l10n.translate('title_passengers'),
           style: AppTypography.headlineLarge,
         ),
         const SizedBox(height: AppSpacing.sm),
@@ -2583,12 +2583,19 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               flex: 1,
               child: OutlinedButton.icon(
                 onPressed: _isSubmitting ? null : _goBack,
-                icon: const Icon(Icons.arrow_back, size: 16),
-                label: Text(l10n.translate('back')),
+                icon: const Icon(Icons.arrow_back, size: 14),
+                label: Text(
+                  l10n.translate('back'),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.text,
+                  ),
+                ),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.text,
                   side: const BorderSide(color: AppColors.border, width: 2),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                   ),
