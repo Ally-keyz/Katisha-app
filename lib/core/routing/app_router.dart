@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../l10n/app_localizations.dart';
+import '../platform/platform_providers.dart';
+import '../platform/local_notification_store.dart';
+
 import '../../features/splash/presentation/screens/splash_screen.dart';
 import '../../features/welcome/presentation/screens/welcome_screen.dart';
 import '../../features/onboarding/presentation/screens/onboarding_screen.dart';
@@ -96,12 +100,12 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 });
 
 /// Shell widget for the User role with bottom navigation.
-class UserHomeShell extends StatelessWidget {
+class UserHomeShell extends ConsumerWidget {
   final Widget child;
   const UserHomeShell({super.key, required this.child});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final currentIndex = _getCurrentIndex(context);
 
     return Scaffold(
@@ -109,6 +113,7 @@ class UserHomeShell extends StatelessWidget {
       bottomNavigationBar: _buildBottomNav(
         context: context,
         currentIndex: currentIndex,
+        ref: ref,
       ),
     );
   }
@@ -128,7 +133,10 @@ class UserHomeShell extends StatelessWidget {
 Widget _buildBottomNav({
   required BuildContext context,
   required int currentIndex,
+  required WidgetRef ref,
 }) {
+  final store = ref.read(localNotificationStoreProvider);
+
   return Container(
     decoration: BoxDecoration(
       color: Colors.white,
@@ -151,21 +159,92 @@ Widget _buildBottomNav({
         borderRadius: BorderRadius.circular(4),
       ),
       surfaceTintColor: Colors.transparent,
-      destinations: _userNavItems
-          .map((item) => NavigationDestination(
-                icon: Icon(item['icon'] as IconData),
-                selectedIcon: Icon(item['selectedIcon'] as IconData),
-                label: item['label'] as String,
-              ))
-          .toList(),
+      destinations: [
+        NavigationDestination(
+          icon: Icon(Icons.home_outlined),
+          selectedIcon: Icon(Icons.home),
+          label: AppLocalizations.of(context).translate('nav_home'),
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.confirmation_num_outlined),
+          selectedIcon: Icon(Icons.confirmation_num),
+          label: AppLocalizations.of(context).translate('nav_my_tickets'),
+        ),
+        NavigationDestination(
+          icon: _NotificationBadgeIcon(store: store),
+          selectedIcon: _NotificationBadgeIcon(store: store, selected: true),
+          label: AppLocalizations.of(context).translate('nav_alerts'),
+        ),
+      ],
     ),
   );
 }
 
-const _userNavItems = [
-  {'icon': Icons.home_outlined, 'selectedIcon': Icons.home, 'label': 'Home'},
-  {'icon': Icons.confirmation_num_outlined, 'selectedIcon': Icons.confirmation_num, 'label': 'My Tickets'},
-  {'icon': Icons.notifications_outlined, 'selectedIcon': Icons.notifications, 'label': 'Alerts'},
-];
+/// Icon widget for the notifications tab that shows a red badge with the
+/// unread notification count.
+class _NotificationBadgeIcon extends StatefulWidget {
+  final LocalNotificationStore store;
+  final bool selected;
+
+  const _NotificationBadgeIcon({required this.store, this.selected = false});
+
+  @override
+  State<_NotificationBadgeIcon> createState() => _NotificationBadgeIconState();
+}
+
+class _NotificationBadgeIconState extends State<_NotificationBadgeIcon> {
+  int _unreadCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCount();
+  }
+
+  Future<void> _loadCount() async {
+    final notifications = await widget.store.getAll();
+    if (!mounted) return;
+    final count = notifications.where((n) => !n.read).length;
+    setState(() => _unreadCount = count);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = Icon(
+      widget.selected ? Icons.notifications : Icons.notifications_outlined,
+    );
+
+    if (_unreadCount == 0) return icon;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        icon,
+        Positioned(
+          right: -2,
+          top: -2,
+          child: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: const BoxDecoration(
+              color: Colors.red,
+              shape: BoxShape.circle,
+            ),
+            constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+            child: Text(
+              _unreadCount > 99 ? '99+' : '$_unreadCount',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                height: 1,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 const _userPaths = ['/home', '/my-bookings', '/notifications'];

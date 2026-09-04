@@ -136,6 +136,9 @@ class AppSw {
     'snooze': 'Lala dakika 5',
     'snooze_remaining': '{count} zimesalia za kuahirisha',
     'no_more_snoozes': 'Hakuna uwezekano zaidi wa kuahirisha',
+    'unread_notification': 'arifa ambayo haijasomwa',
+    'unread_notifications': 'arifa ambazo hazijasomwa',
+    'no_notifications_subtitle': 'Hifadhi safari na utaona sasisho kuhusu safari yako hapa.',
 
     // ── Profile ────────────────────────────────
     'profile': 'Wasifu',
@@ -156,6 +159,17 @@ class AppSw {
     'notification_permission': 'Ruhusa ya arifa inahitajika kwa tahadhari za safari.',
     'alarm_permission': 'Ruhusa ya kengele inahitajika kwa tahadhari za safari.',
     'open_settings': 'Fungua Mipangilio',
+
+    // ── Journey Type Selection ─────────────────────
+    'select_journey_type': 'Chagua aina ya safari',
+    'what_kind_of_trip': 'Chagua aina ya safari yako',
+    'plan_your_trip': 'Panga safari yako',
+    'choose_journey_type_desc': 'Usafiri ndani ya Rwanda, au usafiri wa Afrika Mashariki',
+    'choose_route_and_time': 'Chagua njia yako na wakati wa kuondoka',
+    'intercity': 'Usafiri ndani ya Rwanda',
+    'intercity_desc': 'Safiri ndani ya Rwanda — Kigali kwenda Musanze, Huye, Rubavu, Rusizi, Nyagatare na mengine',
+    'east_africa': 'Usafiri wa Afrika Mashariki',
+    'east_africa_desc': 'Safiri kwenda Kenya, Uganda, Tanzania na kwingineko',
 
     // ── Booking Wizard Steps ─────────────────────
     'booking_title': 'Nunua Tiketi ya Basi',
@@ -182,6 +196,7 @@ class AppSw {
     'search_location': 'Tafuta eneo...',
     'select_origin': 'Chagua mahali pa kuanzia',
     'select_destination': 'Chagua mahali pa kwenda',
+    'select_destination_picker': 'Chagua mji wa kwenye',
     'dest_diff_origin': 'Mahali pa kwenda lazima yawe tofauti na mahali pa kuanzia',
     'travel_date': 'Tarehe ya Safari',
     'departure_time': 'Muda wa Kuondoka',
@@ -189,6 +204,25 @@ class AppSw {
     'select_seats': 'Chagua Viti',
     'seats_selected': 'zimechaguliwa',
     'seat': 'Kiti',
+
+    // ── Route/Agency ───────────────────────────────
+    'searching_routes': 'Loading...',
+    'select_agency_continue': 'Chagua shirika ili kuendelea',
+    'no_routes_subtitle': 'Jaribu miji mingine au rudi tena baadaye',
+    'select_button': 'Chagua',
+    'service_fee_label': 'ada ya huduma',
+
+    // ── Schedule ───────────────────────────────────
+    'pick_date_time': 'Chagua tarehe na muda wa kuondoka',
+    'select_travel_hour': 'chagua saa ya safari',
+    'morning': 'Asubuhi',
+    'afternoon': 'Mchana',
+    'night': 'Usiku',
+
+    // ── Seats ──────────────────────────────────────
+    'seats_needed': 'Unahitaji viti gani?',
+    '1_seat_selected': 'Kiti 1 kimechaguliwa',
+    'n_seats_selected': 'Viti %d vimechaguliwa',
 
     // ── Booking Actions ──────────────────────────
     'continue_btn': 'Endelea',
@@ -199,7 +233,7 @@ class AppSw {
     'currency': 'RWF',
 
     // ── Booking Status ───────────────────────────
-    'booking_confirmed': 'Uhifadhi Umehakikiwa!',
+    'booking_confirmed': 'Uhifadhi umethibitishwa!',
     'redirecting': 'Tunaelekeza kwenye uhifadhi wako...',
     'keep_waiting': 'Endelea Kusubiri',
     'check_phone': 'Angalia simu yako',
@@ -211,7 +245,7 @@ class AppSw {
     'amount': 'Kiasi',
     'ref_code': 'Nambari ya Kumbukumbu',
     'payment_prompt_sent': 'Thibitisha malipo kwenye simu yako',
-    'payment_prompt_desc': 'Ombi la malipo limetumwa kwenye simu yako. Tafadhali thibitisha malipo hapo.',
+    'payment_prompt_desc': 'Ombi la malipo limetumwa kwenye simu yako. Tafadhali lithibitishe hapo.',
     'payment_cancel': 'Ghairi malipo',
     'payment_cancelling': 'Inaghairi...',
 
@@ -228,9 +262,23 @@ class AppSw {
     'no_routes': 'Hakuna njia zilizopatikana kwa chaguo hili',
 
     // ── Booking Footer ───────────────────────────
-    'cancel_policy': 'Ghairi hadi saa 24 kabla ya kuondoka. Umechelewa? Bei hupotea.',
+    'cancel_policy': 'Ghairi hadi saa 24 kabla ya safari. Umechelewa? Fedha hupotea.',
     'pay_methods': 'Lipa kwa MTN MoMo, Airtel Money au M-Pesa.',
-    'guide_link': 'Tazama Mwongozo Kamili wa Uhifadhi na Sera ya Kughairi',
+    'guide_link': 'Tazama Mwongozo Kamili na Sera ya Kughairi',
+
+    // ── Booking Payment ─────────────────────────────
+    'fare': 'Bei',
+    'payment_fee': 'Ada ya Malipo',
+    'total': 'Jumla',
+    'pay_online': 'Lipa Mtandaoni',
+    'pay_online_desc': 'Uthibitisho wa haraka · Ada ya malipo ya ziada inatumika',
+    'your_name': 'JINA LAKO',
+    'payment_phone_label': 'NAMBARI YA SIMU YA MALIPO',
+    'account_auto_created': 'Akaunti yako itaundwa kiotomatiki',
+    'please_enter_name': 'Tafadhali weka jina lako',
+    'cancellation_not_permitted': 'Kughairi hakuruhusiwi',
+    'secure_payment': 'Malipo salama ya mobile money',
+    'need_help': 'Unahitaji msaada? Wasiliana na usaidizi kupitia mwongozo',
 
     // ── Booking Payment Methods ──────────────────
     'mtn_momo': 'MTN Mobile Money',
@@ -264,10 +312,39 @@ class AppSw {
     'ticket_number': 'Nambari ya Tiketi',
     'try_again': 'Jaribu Tena',
     'reference': 'Kumbukumbu',
+    'date': 'Tarehe',
+    'time': 'Muda',
 
     // ── Free Ticket ──────────────────────────────
     'use_free_ticket': 'Tumia tiketi bure',
-    'available': 'inapatikana',
+    'available': 'zinapatikana',
     'free_booking_info': 'Uhifadhi wako utakuwa bure. Hakuna malipo yanayohitajika.',
+
+    // ── Payment Result ─────────────────────────────
+    'insufficient_funds': 'Fedha haitoshi',
+    'payment_failed_message': 'Malipo hayakuweza kukamilika kwa sababu hakuna fedha za kutosha kwenye akaunti yako ya mobile money kufidia kiasi hiki.',
+    'no_money_deducted': 'Hakuna fedha zilizokatwa na kiti chako kimetolewa.',
+    'done': 'Imekamilika',
+    'payment_confirmed_msg': 'Malipo Yamethibitishwa!',
+    'payment_failed_title': 'Malipo Yameshindikana',
+
+    // ── Calendar Months ────────────────────────────
+    'month_jan': 'Januari',
+    'month_feb': 'Februari',
+    'month_mar': 'Machi',
+    'month_apr': 'Aprili',
+    'month_may': 'Mei',
+    'month_jun': 'Juni',
+    'month_jul': 'Julai',
+    'month_aug': 'Agosti',
+    'month_sep': 'Septemba',
+    'month_oct': 'Oktoba',
+    'month_nov': 'Novemba',
+    'month_dec': 'Desemba',
+
+    // ── Navigation ─────────────────────────────────
+    'nav_home': 'Nyumbani',
+    'nav_my_tickets': 'Tiketi Zangu',
+    'nav_alerts': 'Notifications',
   };
 }

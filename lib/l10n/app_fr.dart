@@ -136,6 +136,9 @@ class AppFr {
     'snooze': 'Rappeler dans 5 min',
     'snooze_remaining': '{count} rappel(s) restant(s)',
     'no_more_snoozes': 'Plus de rappels disponibles',
+    'unread_notification': 'notification non lue',
+    'unread_notifications': 'notifications non lues',
+    'no_notifications_subtitle': 'Réservez un voyage et vous verrez les mises à jour de votre trajet ici.',
 
     // ── Profile ────────────────────────────────
     'profile': 'Profil',
@@ -156,6 +159,17 @@ class AppFr {
     'notification_permission': 'La permission de notification est requise pour les alertes de voyage.',
     'alarm_permission': 'La permission d’alarme est requise pour les alertes de voyage.',
     'open_settings': 'Ouvrir les paramètres',
+
+    // ── Journey Type Selection ─────────────────────
+    'select_journey_type': 'Sélectionnez un type de voyage',
+    'what_kind_of_trip': 'Quel type de voyage ?',
+    'plan_your_trip': 'Planifiez votre voyage',
+    'choose_journey_type_desc': 'Voyage interurbain au Rwanda, ou voyage en Afrique de l\'Est',
+    'choose_route_and_time': 'Choisissez votre itinéraire et l\'heure de départ',
+    'intercity': 'Voyage interurbain',
+    'intercity_desc': 'Voyagez au Rwanda — Kigali vers Musanze, Huye, Rubavu, Rusizi, Nyagatare et plus encore',
+    'east_africa': 'Voyage en Afrique de l\'Est',
+    'east_africa_desc': 'Voyage au Kenya, en Ouganda, en Tanzanie et au-delà',
 
     // ── Booking Wizard Steps ─────────────────────
     'booking_title': 'Réserver un billet de bus',
@@ -182,6 +196,7 @@ class AppFr {
     'search_location': 'Rechercher un lieu...',
     'select_origin': 'Sélectionnez le lieu de départ',
     'select_destination': "Sélectionnez le lieu d'arrivée",
+    'select_destination_picker': 'Sélectionnez la ville de destination',
     'dest_diff_origin': 'La destination doit être différente de l’origine',
     'travel_date': 'Date de voyage',
     'departure_time': 'Heure de départ',
@@ -189,6 +204,25 @@ class AppFr {
     'select_seats': 'Sélectionnez les places',
     'seats_selected': 'sélectionné(s)',
     'seat': 'Place',
+
+    // ── Route/Agency ───────────────────────────────
+    'searching_routes': 'Loading...',
+    'select_agency_continue': 'Sélectionnez une agence pour continuer',
+    'no_routes_subtitle': 'Essayez d\'autres villes ou revenez plus tard',
+    'select_button': 'Sélectionner',
+    'service_fee_label': 'frais de service',
+
+    // ── Schedule ───────────────────────────────────
+    'pick_date_time': 'Choisissez une date et heure de départ',
+    'select_travel_hour': 'sélectionnez l\'heure de voyage',
+    'morning': 'Matin',
+    'afternoon': 'Après-midi',
+    'night': 'Nuit',
+
+    // ── Seats ──────────────────────────────────────
+    'seats_needed': 'Combien de places vous faut-il ?',
+    '1_seat_selected': '1 place sélectionnée',
+    'n_seats_selected': '%d places sélectionnées',
 
     // ── Booking Actions ──────────────────────────
     'continue_btn': 'Continuer',
@@ -232,6 +266,20 @@ class AppFr {
     'pay_methods': 'Payez avec MTN MoMo, Airtel Money ou M-Pesa.',
     'guide_link': 'Voir le guide complet et la politique d’annulation',
 
+    // ── Booking Payment ─────────────────────────────
+    'fare': 'Tarif',
+    'payment_fee': 'Frais de paiement',
+    'total': 'Total',
+    'pay_online': 'Payer en ligne',
+    'pay_online_desc': 'Confirmation rapide · Des frais de paiement supplémentaires s\'appliquent',
+    'your_name': 'VOTRE NOM',
+    'payment_phone_label': 'NUMÉRO DE TÉLÉPHONE DE PAIEMENT',
+    'account_auto_created': 'Votre compte sera créé automatiquement',
+    'please_enter_name': 'Veuillez entrer votre nom',
+    'cancellation_not_permitted': 'Les annulations ne sont pas autorisées',
+    'secure_payment': 'Paiement mobile money sécurisé',
+    'need_help': 'Besoin d\'aide ? Contactez l\'assistance via le guide',
+
     // ── Booking Payment Methods ──────────────────
     'mtn_momo': 'MTN Mobile Money',
     'airtel_money': 'Airtel Money',
@@ -249,6 +297,8 @@ class AppFr {
     'my_trips': 'Mes voyages',
     'manage_trips': 'Consultez vos billets et l’historique des voyages',
     'no_upcoming': 'Aucun voyage à venir',
+    'date': 'Date',
+    'time': 'Heure',
     'book_first': 'Réservez votre premier voyage pour commencer',
     'book_a_trip': 'Réserver un voyage',
     'loading_trips': 'Chargement de vos voyages...',
@@ -269,5 +319,32 @@ class AppFr {
     'use_free_ticket': 'Utiliser un billet gratuit',
     'available': 'disponible(s)',
     'free_booking_info': 'Votre réservation sera gratuite. Aucun paiement nécessaire.',
+
+    // ── Payment Result ─────────────────────────────
+    'insufficient_funds': 'Fonds insuffisants',
+    'payment_failed_message': 'Le paiement n\'a pas pu être effectué car il n\'y a pas assez de fonds sur votre compte mobile money pour couvrir ce montant.',
+    'no_money_deducted': 'Aucun montant n\'a été débité et votre place a été libérée.',
+    'done': 'Terminé',
+    'payment_confirmed_msg': 'Paiement confirmé !',
+    'payment_failed_title': 'Paiement échoué',
+
+    // ── Calendar Months ────────────────────────────
+    'month_jan': 'Janvier',
+    'month_feb': 'Février',
+    'month_mar': 'Mars',
+    'month_apr': 'Avril',
+    'month_may': 'Mai',
+    'month_jun': 'Juin',
+    'month_jul': 'Juillet',
+    'month_aug': 'Août',
+    'month_sep': 'Septembre',
+    'month_oct': 'Octobre',
+    'month_nov': 'Novembre',
+    'month_dec': 'Décembre',
+
+    // ── Navigation ─────────────────────────────────
+    'nav_home': 'Accueil',
+    'nav_my_tickets': 'Mes billets',
+    'nav_alerts': 'Notifications',
   };
 }

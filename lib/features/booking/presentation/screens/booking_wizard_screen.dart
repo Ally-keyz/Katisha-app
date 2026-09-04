@@ -17,8 +17,18 @@ import '../../data/booking_repository.dart';
 import '../../../../shared/models/route_model.dart';
 import '../../../../shared/models/booking_model.dart';
 import '../../../../shared/utils/service_fee.dart';
+import '../../../../l10n/app_localizations.dart';
 
-const _stepLabels = ['Route', 'Agency', 'Schedule', 'Passengers', 'Payment'];
+List<String> _stepLabels(BuildContext context) {
+  final l10n = AppLocalizations.of(context);
+  return [
+    l10n.translate('step_route'),
+    l10n.translate('step_agency'),
+    l10n.translate('step_schedule'),
+    l10n.translate('step_passengers'),
+    l10n.translate('step_payment'),
+  ];
+}
 
 /// Duration for the snappy, smooth bottom-sheet enter/exit animation.
 const _sheetAnimDuration = Duration(milliseconds: 220);
@@ -215,16 +225,16 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   String? _stepError() {
     switch (_currentStep) {
       case 0:
-        if (_journeyType == null) return 'Please select a journey type';
+        if (_journeyType == null) return AppLocalizations.of(context).translate('select_journey_type');
         if (_origin == null || _origin!.isEmpty) return 'Please select an origin city';
-        if (_destination == null || _destination!.isEmpty) return 'Please select a destination city';
+        if (_destination == null || _destination!.isEmpty) return AppLocalizations.of(context).translate('select_destination');
         if (_origin == _destination) return 'Origin and destination must be different';
         return null;
       case 1:
-        if (_selectedRoute == null) return 'Please select a bus agency';
+        if (_selectedRoute == null) return AppLocalizations.of(context).translate('select_agency_continue');
         return null;
       case 2:
-        if (_selectedTime == null) return 'Please select a departure time';
+        if (_selectedTime == null) return AppLocalizations.of(context).translate('select_departure_time');
         return null;
       case 3:
         if (_seatCount < 1) return 'At least 1 seat is required';
@@ -593,7 +603,17 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           Timer(const Duration(seconds: 3), () {
             if (mounted) context.go('/my-bookings');
           });
-        } else if (paymentStatus == 'failed' || status == 'cancelled') {
+        } else if (status == 'cancelled') {
+          // User cancelled the payment — return home without showing
+          // the "insufficient funds" failure screen.
+          setState(() {
+            _isSubmitting = false;
+            _paymentWaiting = false;
+            _paymentWaitingBookingId = bookingId;
+            _paymentWaitingReference = refCode;
+          });
+          if (mounted) context.go('/home');
+        } else if (paymentStatus == 'failed') {
           setState(() {
             _isSubmitting = false;
             _bookingConfirmed = false;
@@ -700,13 +720,19 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         referenceCode: booking.referenceCode,
         ticketImage: booking.ticketImage,
       );
-    } else if (booking.paymentStatus == 'failed' ||
-        booking.status == 'cancelled') {
+    } else if (booking.paymentStatus == 'failed') {
       _handlePaymentOutcome(
         paid: false,
         bookingId: bookingId,
         referenceCode: booking.referenceCode,
         reason: booking.rejectionReason,
+      );
+    } else if (booking.status == 'cancelled') {
+      _handlePaymentOutcome(
+        paid: false,
+        bookingId: bookingId,
+        referenceCode: booking.referenceCode,
+        cancelled: true,
       );
     } else {
       // Still processing/pending — keep the waiting UI and let the next poll
@@ -721,6 +747,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     String? referenceCode,
     String? ticketImage,
     String? reason,
+    bool cancelled = false,
   }) {
     if (_paymentFailed || _bookingConfirmed || !mounted) return;
     _stopPaymentPolling();
@@ -748,6 +775,16 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         if (mounted) context.go('/my-bookings');
       });
     } else {
+      // User cancelled — go home without showing the failure screen.
+      if (cancelled) {
+        setState(() {
+          _paymentWaiting = false;
+          _paymentWaitingBookingId = bookingId;
+          _paymentWaitingReference = referenceCode ?? _paymentWaitingReference;
+        });
+        if (mounted) context.go('/home');
+        return;
+      }
       _recordFailureNotification(bookingId, referenceCode ?? '', reason);
       setState(() {
         _paymentWaiting = false;
@@ -758,12 +795,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     }
   }
 
-  /// Polls the booking status while the payment is being awaited so the app
-  /// reflects the real server outcome (paid or failed), matching the web
-  /// frontend which polls every few seconds instead of relying on the socket.
+  /// Polls the booking status every 1s while the payment is being awaited, so
+  /// the app reflects the real server outcome (paid or failed) that the system
+  /// admin sees. Uses the public track endpoint by reference code, which reads
+  /// the authoritative booking status the pawaPay webhook / sweeper updates.
   void _startPaymentPolling() {
     _paymentPollTimer?.cancel();
-    _paymentPollTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+    _paymentPollTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _verifyPayment();
     });
   }
@@ -773,12 +811,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     _paymentPollTimer = null;
   }
 
-  /// Mirrors the web's PaymentStatus: after 5 minutes with no resolution, do
-  /// one final verification and, if the payment is still in flight, abandon the
-  /// booking (releasing the held seat) and surface the failed screen.
+  /// Hard cap on how long the waiting screen stays: never longer than 40s. Do
+  /// one final verification and, if the payment still isn't confirmed as paid,
+  /// abandon the booking (releasing the held seat) and surface the failed
+  /// screen — so it never sits on "pending" forever.
   void _startPaymentAbandonTimer() {
     _paymentAbandonTimer?.cancel();
-    _paymentAbandonTimer = Timer(const Duration(minutes: 5), () async {
+    _paymentAbandonTimer = Timer(const Duration(seconds: 40), () async {
       final reference = _paymentWaitingReference;
       final bookingId = _paymentWaitingBookingId;
       var terminal = false;
@@ -793,8 +832,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               referenceCode: b.referenceCode,
             );
             terminal = true;
-          } else if (b.paymentStatus == 'failed' ||
-              b.status == 'cancelled') {
+          } else if (b.paymentStatus == 'failed') {
             _handlePaymentOutcome(
               paid: false,
               bookingId: b.id.isNotEmpty ? b.id : (bookingId ?? ''),
@@ -802,11 +840,19 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               reason: b.rejectionReason,
             );
             terminal = true;
+          } else if (b.status == 'cancelled') {
+            _handlePaymentOutcome(
+              paid: false,
+              bookingId: b.id.isNotEmpty ? b.id : (bookingId ?? ''),
+              referenceCode: b.referenceCode,
+              cancelled: true,
+            );
+            terminal = true;
           }
         }
       }
       if (terminal || !mounted) return;
-      // Still processing after 5 minutes — abandon to release the seat.
+      // Still not paid after 40s — abandon to release the seat and fail.
       if (bookingId != null && bookingId.isNotEmpty) {
         await _repo.abandonBooking(bookingId);
       }
@@ -942,7 +988,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               ],
               Expanded(
                 child: Text(
-                  _stepLabels[_currentStep],
+                  _stepLabels(context)[_currentStep],
                   style: AppTypography.titleMedium,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -1065,6 +1111,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       _journeyType == 'east_africa' ? _eastAfricaDestinations : _intercityDestinations;
 
   Widget _buildRouteStep() {
+    final l10n = AppLocalizations.of(context);
     final needsType = _journeyType == null;
     return Column(
       key: const ValueKey('step-route'),
@@ -1072,14 +1119,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       children: [
         const SizedBox(height: AppSpacing.lg),
         Text(
-          needsType ? 'What kind of trip?' : 'Plan your trip',
+          needsType ? l10n.translate('what_kind_of_trip') : l10n.translate('plan_your_trip'),
           style: AppTypography.headlineLarge,
         ),
         const SizedBox(height: AppSpacing.sm),
         Text(
           needsType
-              ? 'Rwanda intercity or East African cross-border travel'
-              : 'Choose your route and departure time',
+              ? l10n.translate('choose_journey_type_desc')
+              : l10n.translate('choose_route_and_time'),
           style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
         ),
         if (needsType) ...[
@@ -1128,21 +1175,22 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   /// Two blue selection cards — Rwanda Intercity vs East African Travel.
   /// Matches the web BookingWizard journey-type picker styling.
   Widget _buildJourneyTypeCards() {
+    final l10n = AppLocalizations.of(context);
     return Column(
       children: [
         _buildJourneyTypeCard(
           icon: Icons.directions_bus,
-          title: 'Rwanda Intercity',
+          title: l10n.translate('intercity'),
           description:
-              'Travel within Rwanda — Kigali to Musanze, Huye, Rubavu, Rusizi, Nyagatare and more',
+              l10n.translate('intercity_desc'),
           onTap: () => _selectJourneyType('intercity'),
         ),
         const SizedBox(height: AppSpacing.md),
         _buildJourneyTypeCard(
           icon: Icons.public,
-          title: 'East African Travel',
+          title: l10n.translate('east_africa'),
           description:
-              'Cross-border travel to Kenya, Uganda, Tanzania and beyond',
+              l10n.translate('east_africa_desc'),
           onTap: () => _selectJourneyType('east_africa'),
         ),
       ],
@@ -1224,8 +1272,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   void _openDestinationPicker() {
+    final l10n = AppLocalizations.of(context);
     _showLocationPicker(
-      title: 'Select destination city',
+      title: l10n.translate('select_destination_picker'),
       currentValue: _destination,
       exclude: _origin,
       options: _scopedDestinations,
@@ -1361,6 +1410,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // ── Step 1: Agency ──
 
   Widget _buildAgencyStep() {
+    final l10n = AppLocalizations.of(context);
     return Column(
       key: const ValueKey('step-agency'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1377,7 +1427,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         ),
         const SizedBox(height: AppSpacing.xl),
         if (_searchingRoutes)
-          const Center(
+          Center(
             child: Padding(
               padding: EdgeInsets.all(AppSpacing.xxl),
               child: Column(
@@ -1388,7 +1438,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     child: CircularProgressIndicator(strokeWidth: 3),
                   ),
                   SizedBox(height: AppSpacing.md),
-                  Text('Searching available routes...'),
+                  Text(l10n.translate('searching_routes')),
                 ],
               ),
             ),
@@ -1402,7 +1452,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             Padding(
               padding: const EdgeInsets.only(bottom: AppSpacing.md),
               child: Text(
-                'Select an agency to continue',
+                l10n.translate('select_agency_continue'),
                 style: AppTypography.bodySmall.copyWith(color: AppColors.textMuted),
                 textAlign: TextAlign.center,
               ),
@@ -1537,6 +1587,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   Widget _buildRouteError() {
+    final l10n = AppLocalizations.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.xxl),
@@ -1553,7 +1604,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             OutlinedButton.icon(
               onPressed: _searchRoutes,
               icon: const Icon(Icons.refresh, size: 18),
-              label: const Text('Retry'),
+              label: Text(l10n.translate('retry')),
             ),
           ],
         ),
@@ -1562,6 +1613,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   Widget _buildNoRoutes() {
+    final l10n = AppLocalizations.of(context);
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.xxl),
@@ -1575,7 +1627,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              'Try different cities or check back later',
+              l10n.translate('no_routes_subtitle'),
               style: AppTypography.bodySmall.copyWith(color: AppColors.textMuted),
             ),
           ],
@@ -1585,6 +1637,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   Widget _buildRouteList() {
+    final l10n = AppLocalizations.of(context);
     return Column(
       children: _routes.map((route) {
         final isSelected = _selectedRoute?.id == route.id;
@@ -1736,7 +1789,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Text(
-                            'Select',
+                            l10n.translate('select_button'),
                             style: AppTypography.bodySmall.copyWith(
                               color: AppColors.textMuted,
                               fontSize: 10,
@@ -1749,7 +1802,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   ),
                   const SizedBox(height: AppSpacing.xs),
                   Text(
-                    '+$serviceFee RWF service fee',
+                    '+$serviceFee RWF ${l10n.translate('service_fee_label')}',
                     style: AppTypography.bodySmall.copyWith(
                       color: isSelected
                           ? AppColors.white.withValues(alpha: 0.85)
@@ -1768,6 +1821,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // ── Step 2: Schedule ──
 
   Widget _buildScheduleStep() {
+    final l10n = AppLocalizations.of(context);
     return Column(
       key: const ValueKey('step-schedule'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1779,11 +1833,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         ),
         const SizedBox(height: AppSpacing.sm),
         Text(
-          'Pick a date and departure time',
+          l10n.translate('pick_date_time'),
           style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
         ),
         const SizedBox(height: AppSpacing.xl),
-        _buildLabel('TRAVEL DATE'),
+        _buildLabel(l10n.translate('travel_date')),
         const SizedBox(height: AppSpacing.sm),
         if (_showCalendar)
           _buildCalendar()
@@ -1812,7 +1866,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           key: _departureTimeKey,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildLabel('DEPARTURE TIME'),
+            _buildLabel(l10n.translate('departure_time')),
             const SizedBox(height: AppSpacing.sm),
             Padding(
               padding: const EdgeInsets.only(bottom: AppSpacing.sm),
@@ -1822,7 +1876,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   final t = Curves.easeInOut.transform(_blinkController.value);
                   final color = Color.lerp(AppColors.primary, AppColors.textMuted, t)!;
                   return Text(
-                    'select travel hour',
+                    l10n.translate('select_travel_hour'),
                     style: AppTypography.bodySmall.copyWith(
                       color: color,
                       fontWeight: FontWeight.w700,
@@ -1970,6 +2024,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   Widget _buildTimeSlots() {
+    final l10n = AppLocalizations.of(context);
     final morning = <String>[];
     final afternoon = <String>[];
     final night = <String>[];
@@ -2054,12 +2109,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
     return Column(
       children: [
-        _buildSection(title: 'Morning', slots: morning),
+        _buildSection(title: l10n.translate('morning'), slots: morning),
         const SizedBox(height: AppSpacing.md),
-        _buildSection(title: 'Afternoon', slots: afternoon),
+        _buildSection(title: l10n.translate('afternoon'), slots: afternoon),
         if (night.isNotEmpty) ...[
           const SizedBox(height: AppSpacing.md),
-          _buildSection(title: 'Night', slots: night),
+          _buildSection(title: l10n.translate('night'), slots: night),
         ],
       ],
     );
@@ -2068,6 +2123,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // ── Step 3: Seats ──
 
   Widget _buildSeatsStep() {
+    final l10n = AppLocalizations.of(context);
     return Column(
       key: const ValueKey('step-seats'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2079,7 +2135,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         ),
         const SizedBox(height: AppSpacing.sm),
         Text(
-          'How many seats do you need?',
+          l10n.translate('seats_needed'),
           style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
         ),
         const SizedBox(height: AppSpacing.xxl),
@@ -2125,7 +2181,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               ),
               const SizedBox(height: AppSpacing.md),
               Text(
-                _seatCount == 1 ? '1 seat selected' : '$_seatCount seats selected',
+                _seatCount == 1 ? l10n.translate('1_seat_selected') : l10n.translate('n_seats_selected').replaceAll('%d', '$_seatCount'),
                 style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
               ),
             ],
@@ -2164,6 +2220,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // ── Step 4: Payment ──
 
   Widget _buildPaymentStep() {
+    final l10n = AppLocalizations.of(context);
     final effectivePrice = _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
     final fareTotal = effectivePrice * _seatCount;
     final journeyType = _selectedRoute?.type;
@@ -2229,15 +2286,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 textAlign: TextAlign.center,
               ),
               const Divider(height: AppSpacing.xl),
-              _buildSummaryRow('Fare', '$fareTotal RWF'),
+              _buildSummaryRow(l10n.translate('fare'), '$fareTotal RWF'),
               const SizedBox(height: AppSpacing.xs),
-              _buildSummaryRow('Service Fee', '+$serviceFee RWF'),
+              _buildSummaryRow(l10n.translate('system_fee'), '+$serviceFee RWF'),
               if (isOnline) ...[
                 const SizedBox(height: AppSpacing.xs),
                 _buildSummaryRow('Payment Fee', '+$onlineFee RWF'),
               ],
               const SizedBox(height: AppSpacing.xs),
-              _buildSummaryRow('Total', '$displayTotal RWF', isBold: true),
+              _buildSummaryRow(l10n.translate('total'), '$displayTotal RWF', isBold: true),
             ],
           ),
         ),
@@ -2320,6 +2377,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // Pay Online modal (matches web PaymentModal): payment method + phone +
   // guest name + green Pay button.
   Widget _buildOnlinePaymentModal() {
+    final l10n = AppLocalizations.of(context);
     final effectivePrice = _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
     final fareTotal = effectivePrice * _seatCount;
     final serviceFee = systemFeeFor(_selectedRoute?.type, effectivePrice, _seatCount).round();
@@ -2342,12 +2400,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Pay Online',
+                    l10n.translate('pay_online'),
                     style: AppTypography.titleLarge.copyWith(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: AppSpacing.xs),
                   Text(
-                    'Fast confirmation · Additional payment fee applies',
+                    l10n.translate('pay_online_desc'),
                     style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
                   ),
                   const SizedBox(height: AppSpacing.lg),
@@ -2362,20 +2420,20 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     ),
                     child: Column(
                       children: [
-                        _buildSummaryRow('Fare', '$fareTotal RWF'),
+                        _buildSummaryRow(l10n.translate('fare'), '$fareTotal RWF'),
                         const SizedBox(height: AppSpacing.xs),
-                        _buildSummaryRow('Service Fee', '+$serviceFee RWF'),
+                        _buildSummaryRow(l10n.translate('system_fee'), '+$serviceFee RWF'),
                         const SizedBox(height: AppSpacing.xs),
                         _buildSummaryRow('Payment Fee', '+$onlineFee RWF'),
                         const Divider(height: AppSpacing.md),
-                        _buildSummaryRow('Total', '$onlineTotal RWF', isBold: true),
+                        _buildSummaryRow(l10n.translate('total'), '$onlineTotal RWF', isBold: true),
                       ],
                     ),
                   ),
                   const SizedBox(height: AppSpacing.lg),
 
                   if (!_isLoggedIn) ...[
-                    _buildLabel('YOUR NAME'),
+                    _buildLabel(l10n.translate('your_name')),
                     const SizedBox(height: AppSpacing.sm),
                     TextFormField(
                       controller: _guestNameController,
@@ -2410,7 +2468,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     const SizedBox(height: AppSpacing.lg),
                   ],
 
-                  _buildLabel('PAYMENT PHONE NUMBER'),
+                  _buildLabel(l10n.translate('payment_phone_label')),
                   const SizedBox(height: AppSpacing.sm),
                   TextFormField(
                     controller: _phoneController,
@@ -2448,7 +2506,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   Text(
-                    'Your account will be created automatically',
+                    l10n.translate('account_auto_created'),
                     style: AppTypography.bodySmall.copyWith(color: AppColors.textMuted, fontSize: 12),
                   ),
                   const SizedBox(height: AppSpacing.lg),
@@ -2466,7 +2524,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                                   .replaceAll(RegExp(r'[^0-9]'), '');
                               setModalState(() {
                                 nameError =
-                                    nameOk ? '' : 'Please enter your name';
+                                    nameOk ? '' : l10n.translate('please_enter_name');
                                 phoneError = digits.length >= 9
                                     ? ''
                                     : 'Please enter a valid payment phone number';
@@ -2512,6 +2570,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // ── NAVIGATION ──
 
   Widget _buildNavigationButtons() {
+    final l10n = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: 0,
@@ -2525,7 +2584,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               child: OutlinedButton.icon(
                 onPressed: _isSubmitting ? null : _goBack,
                 icon: const Icon(Icons.arrow_back, size: 16),
-                label: const Text('Back'),
+                label: Text(l10n.translate('back')),
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.text,
                   side: const BorderSide(color: AppColors.border, width: 2),
@@ -2571,7 +2630,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          _currentStep == 4 ? 'Pay Now' : 'Continue',
+                          _currentStep == 4 ? l10n.translate('pay_now') : l10n.translate('continue_btn'),
                           style: AppTypography.buttonSmall,
                         ),
                         const SizedBox(width: AppSpacing.xs),
@@ -2588,6 +2647,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // ── Footer info ──
 
   Widget _buildFooterInfo() {
+    final l10n = AppLocalizations.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(
         horizontal: 0,
@@ -2597,17 +2657,17 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         children: [
           _buildFooterItem(
             Icons.block,
-            'Cancellations are not permitted',
+            l10n.translate('cancel_policy'),
           ),
           const SizedBox(height: 6),
           _buildFooterItem(
             Icons.phone_android,
-            'Secure mobile money payment',
+            l10n.translate('pay_methods'),
           ),
           const SizedBox(height: 6),
           _buildFooterItem(
             Icons.info_outline,
-            'Need help? Contact support via the guide',
+            l10n.translate('guide_link'),
           ),
         ],
       ),
@@ -2664,6 +2724,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // ── BOOKING CONFIRMED VIEW ──
 
   Widget _buildConfirmedView() {
+    final l10n = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: AppColors.white,
       body: SafeArea(
@@ -2694,14 +2755,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 ),
                 const SizedBox(height: AppSpacing.xl),
                 Text(
-                  'Booking Confirmed!',
+                  l10n.translate('booking_confirmed'),
                   style: AppTypography.headlineLarge.copyWith(
                     color: const Color(0xFF16A34A),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 Text(
-                  'Redirecting to your booking...',
+                  l10n.translate('redirecting'),
                   style: AppTypography.bodyMedium.copyWith(
                     color: AppColors.textSub,
                   ),
@@ -2764,11 +2825,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // status with a clear reason and a retry action. The user is told the
   // payment failed (mostly due to insufficient funds) and shown how to retry.
   Widget _buildPaymentFailedView() {
+    final l10n = AppLocalizations.of(context);
     final reason = (_paymentFailureReason != null &&
             _paymentFailureReason!.isNotEmpty)
         ? _paymentFailureReason!
-        : 'The payment could not be completed because there are not enough '
-            'funds in your mobile money account to cover this amount.';
+        : l10n.translate('payment_failed_message');
 
     return Scaffold(
       backgroundColor: AppColors.error,
@@ -2798,8 +2859,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     ),
                   ),
                   const SizedBox(height: AppSpacing.lg),
-                  const Text(
-                    'Booking failed',
+                  Text(
+                    l10n.translate('insufficient_funds'),
                     style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.w700,
@@ -2818,7 +2879,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   ),
                   const SizedBox(height: AppSpacing.lg),
                   Text(
-                    'No money was deducted and your seat has been released.',
+                    l10n.translate('no_money_deducted'),
                     style: AppTypography.bodySmall.copyWith(
                       color: AppColors.white.withValues(alpha: 0.9),
                       height: 1.4,
@@ -2827,24 +2888,24 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   ),
                   const SizedBox(height: AppSpacing.xl),
 
-                  // Retry: blue button, small radius, white text — returns the
+                  // Retry: white button, blue text, small radius — returns the
                   // user to the destination selection to start a fresh trip.
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
                       onPressed: _retryFromFailed,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: AppColors.white,
+                        backgroundColor: AppColors.white,
+                        foregroundColor: AppColors.primary,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
                         ),
                         elevation: 0,
                       ),
-                      child: const Text(
-                        'Retry',
-                        style: TextStyle(
+                      child: Text(
+                        l10n.translate('retry'),
+                        style: const TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
                         ),
@@ -2853,11 +2914,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   ),
                   const SizedBox(height: AppSpacing.sm),
 
-                  // Done: go home
+                  // Done: behaves the same as Retry — return to destination
+                  // selection to start a fresh trip.
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton(
-                      onPressed: () => context.go('/home'),
+                      onPressed: _retryFromFailed,
                       style: OutlinedButton.styleFrom(
                         foregroundColor: AppColors.white,
                         side: const BorderSide(
@@ -2869,9 +2931,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                           borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
                         ),
                       ),
-                      child: const Text(
-                        'Done',
-                        style: TextStyle(
+                      child: Text(
+                        l10n.translate('done'),
+                        style: const TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
                         ),
@@ -2893,6 +2955,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // a white full-screen centred column with the same Lottie animation, the
   // same copy and a single green "Cancel payment" CTA.
   Widget _buildPaymentWaitingView() {
+    final l10n = AppLocalizations.of(context);
     final effectivePrice =
         _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
     final fareTotal = effectivePrice * _seatCount;
@@ -2924,7 +2987,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   const SizedBox(height: AppSpacing.sm),
 
                   Text(
-                    'Confirm the payment on your phone',
+                    l10n.translate('payment_prompt_sent'),
                     style: AppTypography.titleLarge.copyWith(
                       fontWeight: FontWeight.w600,
                       color: AppColors.text,
@@ -2934,8 +2997,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   const SizedBox(height: AppSpacing.xs + 2),
 
                   Text(
-                    'A payment prompt has been sent to your phone. '
-                    'Please confirm the payment there.',
+                    l10n.translate('payment_prompt_desc'),
                     style: AppTypography.bodyMedium.copyWith(
                       color: AppColors.textSub,
                       height: 1.5,
@@ -2945,7 +3007,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   const SizedBox(height: AppSpacing.lg),
 
                   Text(
-                    'Reference Code: ${_paymentWaitingReference ?? '-'}',
+                    '${l10n.translate('ref_code')}: ${_paymentWaitingReference ?? '-'}',
                     style: AppTypography.bodySmall.copyWith(
                       color: AppColors.textMuted,
                       fontFamily: 'monospace',
@@ -2955,7 +3017,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   const SizedBox(height: AppSpacing.xs),
 
                   Text(
-                    'Amount: ${_formatAmount(totalAmount)} RWF',
+                    '${l10n.translate('amount')}: ${_formatAmount(totalAmount)} RWF',
                     style: AppTypography.bodySmall.copyWith(
                       color: AppColors.textMuted,
                     ),
@@ -2985,7 +3047,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                             )
                           : const Icon(Icons.close, size: 16),
                       label: Text(
-                        _cancellingWaiting ? 'Cancelling...' : 'Cancel payment',
+                        _cancellingWaiting ? l10n.translate('payment_cancelling') : l10n.translate('payment_cancel'),
                         style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
@@ -3084,11 +3146,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   String _monthName(int month) {
-    const names = [
-      '', 'January', 'February', 'March', 'April', 'May', 'June',
-      'July', 'August', 'September', 'October', 'November', 'December',
+    const keys = [
+      '', 'month_jan', 'month_feb', 'month_mar', 'month_apr', 'month_may', 'month_jun',
+      'month_jul', 'month_aug', 'month_sep', 'month_oct', 'month_nov', 'month_dec',
     ];
-    return names[month];
+    final l10n = AppLocalizations.of(context);
+    return l10n.translate(keys[month]);
   }
 
   String _normalizePhone(String input) {

@@ -130,6 +130,25 @@ class BookingRepository {
     }
   }
 
+  /// Lightweight payment-status-only poll. Returns just paymentStatus and
+  /// status — much smaller payload than [trackBooking] for rapid polling.
+  Future<Either<Failure, ({String paymentStatus, String status})>> trackBookingStatus(String referenceCode) async {
+    try {
+      final response = await _apiClient.get(
+        '/bookings/track/$referenceCode/status',
+      );
+      final data = response.data as Map<String, dynamic>;
+      return Right((
+        paymentStatus: data['paymentStatus'] as String? ?? 'processing',
+        status: data['status'] as String? ?? 'pending',
+      ));
+    } on DioException catch (e) {
+      return Left(ApiClient.mapDioError(e));
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
+    }
+  }
+
   Future<Either<Failure, Booking>> cancelBooking(String id) async {
     try {
       final response = await _apiClient.patch('/bookings/$id/cancel');

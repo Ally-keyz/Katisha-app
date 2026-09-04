@@ -133,6 +133,9 @@ class AppEn {
     'snooze': 'Snooze 5 min',
     'snooze_remaining': '{count} snooze(s) remaining',
     'no_more_snoozes': 'No more snoozes available',
+    'unread_notification': 'unread notification',
+    'unread_notifications': 'unread notifications',
+    'no_notifications_subtitle': 'Book a trip and you will see updates about your journey here.',
 
     // ── Profile ────────────────────────────────
     'profile': 'Profile',
@@ -153,6 +156,17 @@ class AppEn {
     'notification_permission': 'Notification permission is required for journey alerts.',
     'alarm_permission': 'Alarm permission is required for journey alerts.',
     'open_settings': 'Open Settings',
+
+    // ── Journey Type Selection ─────────────────────
+    'select_journey_type': 'Please select a journey type',
+    'what_kind_of_trip': 'What kind of trip?',
+    'plan_your_trip': 'Plan your trip',
+    'choose_journey_type_desc': 'Rwanda intercity or East African cross-border travel',
+    'choose_route_and_time': 'Choose your route and departure time',
+    'intercity': 'Rwanda Intercity',
+    'intercity_desc': 'Travel within Rwanda — Kigali to Musanze, Huye, Rubavu, Rusizi, Nyagatare and more',
+    'east_africa': 'East African Travel',
+    'east_africa_desc': 'Cross-border travel to Kenya, Uganda, Tanzania and beyond',
 
     // ── Booking Wizard Steps ─────────────────────
     'booking_title': 'Book a Bus Ticket',
@@ -179,6 +193,7 @@ class AppEn {
     'search_location': 'Search location...',
     'select_origin': 'Select departure location',
     'select_destination': 'Select arrival location',
+    'select_destination_picker': 'Select destination city',
     'dest_diff_origin': 'Destination must differ from origin',
     'travel_date': 'Travel Date',
     'departure_time': 'Departure Time',
@@ -186,6 +201,25 @@ class AppEn {
     'select_seats': 'Select Seats',
     'seats_selected': 'selected',
     'seat': 'Seat',
+
+    // ── Route/Agency ───────────────────────────────
+    'searching_routes': 'Loading...',
+    'select_agency_continue': 'Select an agency to continue',
+    'no_routes_subtitle': 'Try different cities or check back later',
+    'select_button': 'Select',
+    'service_fee_label': 'service fee',
+
+    // ── Schedule ───────────────────────────────────
+    'pick_date_time': 'Pick a date and departure time',
+    'select_travel_hour': 'select travel hour',
+    'morning': 'Morning',
+    'afternoon': 'Afternoon',
+    'night': 'Night',
+
+    // ── Seats ──────────────────────────────────────
+    'seats_needed': 'How many seats do you need?',
+    '1_seat_selected': '1 seat selected',
+    'n_seats_selected': '%d seats selected',
 
     // ── Booking Actions ──────────────────────────
     'continue_btn': 'Continue',
@@ -224,10 +258,24 @@ class AppEn {
     'phone_required': 'Phone number required',
     'no_routes': 'No routes found for this selection',
 
+    // ── Booking Payment ─────────────────────────────
+    'fare': 'Fare',
+    'payment_fee': 'Payment Fee',
+    'total': 'Total',
+    'pay_online': 'Pay Online',
+    'pay_online_desc': 'Fast confirmation · Additional payment fee applies',
+    'your_name': 'YOUR NAME',
+    'payment_phone_label': 'PAYMENT PHONE NUMBER',
+    'account_auto_created': 'Your account will be created automatically',
+    'please_enter_name': 'Please enter your name',
+
     // ── Booking Footer ───────────────────────────
     'cancel_policy': 'Cancel up to 24h before departure. Late? Fare is forfeited.',
     'pay_methods': 'Pay with MTN MoMo, Airtel Money or M-Pesa.',
     'guide_link': 'See full Booking Guide & Cancellation Policy',
+    'cancellation_not_permitted': 'Cancellations are not permitted',
+    'secure_payment': 'Secure mobile money payment',
+    'need_help': 'Need help? Contact support via the guide',
 
     // ── Booking Payment Methods ──────────────────
     'mtn_momo': 'MTN Mobile Money',
@@ -261,10 +309,39 @@ class AppEn {
     'ticket_number': 'Ticket Number',
     'try_again': 'Try Again',
     'reference': 'Reference',
+    'date': 'Date',
+    'time': 'Time',
 
     // ── Free Ticket ──────────────────────────────
     'use_free_ticket': 'Use free ticket',
     'available': 'available',
     'free_booking_info': 'Your booking will be free. No payment needed.',
+
+    // ── Payment Result ─────────────────────────────
+    'insufficient_funds': 'Insufficient funds',
+    'payment_failed_message': 'The payment could not be completed because there are not enough funds in your mobile money account to cover this amount.',
+    'no_money_deducted': 'No money was deducted and your seat has been released.',
+    'done': 'Done',
+    'payment_confirmed_msg': 'Payment Confirmed!',
+    'payment_failed_title': 'Payment Failed',
+
+    // ── Calendar Months ────────────────────────────
+    'month_jan': 'January',
+    'month_feb': 'February',
+    'month_mar': 'March',
+    'month_apr': 'April',
+    'month_may': 'May',
+    'month_jun': 'June',
+    'month_jul': 'July',
+    'month_aug': 'August',
+    'month_sep': 'September',
+    'month_oct': 'October',
+    'month_nov': 'November',
+    'month_dec': 'December',
+
+    // ── Navigation ─────────────────────────────────
+    'nav_home': 'Home',
+    'nav_my_tickets': 'My Tickets',
+    'nav_alerts': 'Notifications',
   };
 }

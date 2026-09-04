@@ -41,16 +41,22 @@ class PaymentWaitingScreen extends ConsumerStatefulWidget {
 }
 
 class _PaymentWaitingScreenState extends ConsumerState<PaymentWaitingScreen> {
-  // Matches the web frontend behaviour.
-  static const _pollInterval = Duration(seconds: 5);
-  static const _timeout = Duration(minutes: 5);
+  // Aggressive early polling: poll every 500ms for the first 10 seconds
+  // (quick failures like insufficient funds resolve in <10s), then settle
+  // to 1s intervals. Total timeout remains 40s.
+  static const _fastPollInterval = Duration(milliseconds: 500);
+  static const _slowPollInterval = Duration(seconds: 1);
+  static const _fastPollThreshold = Duration(seconds: 10);
+  static const _timeout = Duration(seconds: 40);
 
   Timer? _pollTimer;
   Timer? _timeoutTimer;
   StreamSubscription<Map<String, dynamic>>? _paymentSub;
+  StreamSubscription<Map<String, dynamic>>? _bookingStatusSub;
   bool _navigated = false;
   bool _cancelling = false;
   String? _error;
+  DateTime? _pollStarted;
 
   BookingRepository get _repo => ref.read(_bookingRepoProvider);
   SoundService get _soundService => ref.read(soundServiceProvider);
@@ -68,19 +74,29 @@ class _PaymentWaitingScreenState extends ConsumerState<PaymentWaitingScreen> {
     _pollTimer?.cancel();
     _timeoutTimer?.cancel();
     _paymentSub?.cancel();
+    _bookingStatusSub?.cancel();
     super.dispose();
   }
 
   void _startPolling() {
+    _pollStarted = DateTime.now();
     _checkPaymentStatus();
-    _pollTimer = Timer.periodic(_pollInterval, (_) => _checkPaymentStatus());
+    _scheduleNextPoll();
+  }
+
+  void _scheduleNextPoll() {
+    final elapsed = DateTime.now().difference(_pollStarted!);
+    final interval = elapsed < _fastPollThreshold
+        ? _fastPollInterval
+        : _slowPollInterval;
+    _pollTimer = Timer.periodic(interval, (_) => _checkPaymentStatus());
   }
 
   void _startTimeout() {
     _timeoutTimer = Timer(_timeout, () async {
       if (_navigated) return;
       // Abandon the unpaid booking so its seats are released, exactly like
-      // the web's 5-minute abandon timeout.
+      // the web's abandon timeout (shortened to 40s).
       await _repo.abandonBooking(widget.bookingId);
       if (!mounted || _navigated) return;
       _navigated = true;
@@ -88,13 +104,30 @@ class _PaymentWaitingScreenState extends ConsumerState<PaymentWaitingScreen> {
     });
   }
 
-  /// Listen for the instant payment confirmation pushed over the socket,
-  /// mirroring the web frontend's socket handling.
+  /// Listen for instant payment confirmation or failure pushed over the socket.
   void _listenForPayment() {
     try {
-      _paymentSub = ref.read(socketServiceProvider).onPaymentConfirmed.listen(
+      final socketService = ref.read(socketServiceProvider);
+
+      // payment:confirmed (emitted by server when deposit completes)
+      _paymentSub = socketService.onPaymentConfirmed.listen(
         (data) {
           if (mounted) _onPaymentConfirmed();
+        },
+      );
+
+      // booking_status with status: 'failed' (emitted by server on failure)
+      _bookingStatusSub = socketService.onBookingStatusChanged.listen(
+        (data) {
+          if (!mounted || _navigated) return;
+          if (data['status'] == 'failed') {
+            _navigated = true;
+            _pollTimer?.cancel();
+            _timeoutTimer?.cancel();
+            _paymentSub?.cancel();
+            _bookingStatusSub?.cancel();
+            context.go('/home');
+          }
         },
       );
     } catch (_) {
@@ -111,6 +144,7 @@ class _PaymentWaitingScreenState extends ConsumerState<PaymentWaitingScreen> {
     _pollTimer?.cancel();
     _timeoutTimer?.cancel();
     _paymentSub?.cancel();
+    _bookingStatusSub?.cancel();
 
     _soundService.vibrate();
 
@@ -140,21 +174,25 @@ class _PaymentWaitingScreenState extends ConsumerState<PaymentWaitingScreen> {
 
   Future<void> _checkPaymentStatus() async {
     if (_navigated) return;
-    final result = await _repo.getBooking(widget.bookingId);
+    // Poll the lightweight status endpoint — much smaller payload than the
+    // full trackBooking endpoint, enabling faster 500ms polling in the first
+    // 10 seconds when quick failures (insufficient funds) resolve.
+    final result = await _repo.trackBookingStatus(widget.referenceCode);
     if (!mounted || _navigated) return;
 
     result.fold(
       (failure) => setState(() => _error = failure.message),
-      (booking) {
-        if (booking.paymentStatus == 'paid') {
-          _onPaymentConfirmed(booking);
-        } else if (booking.paymentStatus == 'failed' ||
-            booking.status == 'cancelled') {
+      (statusData) {
+        if (statusData.paymentStatus == 'paid') {
+          _onPaymentConfirmed();
+        } else if (statusData.paymentStatus == 'failed' ||
+            statusData.status == 'cancelled') {
           if (_navigated) return;
           _navigated = true;
           _pollTimer?.cancel();
           _timeoutTimer?.cancel();
           _paymentSub?.cancel();
+          _bookingStatusSub?.cancel();
           context.go('/home');
         }
       },
@@ -213,6 +251,7 @@ class _PaymentWaitingScreenState extends ConsumerState<PaymentWaitingScreen> {
     _pollTimer?.cancel();
     _timeoutTimer?.cancel();
     _paymentSub?.cancel();
+    _bookingStatusSub?.cancel();
     context.go('/home');
   }
 

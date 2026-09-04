@@ -46,10 +46,10 @@ class SocketServiceImpl implements SocketService {
       _connected = false;
     });
 
-    _socket!.on('booking:status', (data) {
+    _socket!.on('booking_status', (data) {
       if (data is Map<String, dynamic>) {
         _bookingStatusController.add(data);
-        _eventController.add(SocketEvent(name: 'booking:status', data: data));
+        _eventController.add(SocketEvent(name: 'booking_status', data: data));
       }
     });
 
@@ -57,6 +57,13 @@ class SocketServiceImpl implements SocketService {
       if (data is Map<String, dynamic>) {
         _paymentController.add(data);
         _eventController.add(SocketEvent(name: 'payment:confirmed', data: data));
+      }
+    });
+
+    _socket!.on('payment:failed', (data) {
+      if (data is Map<String, dynamic>) {
+        _bookingStatusController.add(data);
+        _eventController.add(SocketEvent(name: 'payment:failed', data: data));
       }
     });
 
