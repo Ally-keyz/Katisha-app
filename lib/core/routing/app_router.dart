@@ -3,8 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../l10n/app_localizations.dart';
-import '../platform/platform_providers.dart';
-import '../platform/local_notification_store.dart';
+import '../platform/badge_counts.dart';
 
 import '../../features/splash/presentation/screens/splash_screen.dart';
 import '../../features/welcome/presentation/screens/welcome_screen.dart';
@@ -135,7 +134,8 @@ Widget _buildBottomNav({
   required int currentIndex,
   required WidgetRef ref,
 }) {
-  final store = ref.read(localNotificationStoreProvider);
+  // Live badge counts (tickets + notifications) that update automatically.
+  final badgeCounts = ref.watch(badgeCountsProvider);
 
   return Container(
     decoration: BoxDecoration(
@@ -166,13 +166,37 @@ Widget _buildBottomNav({
           label: AppLocalizations.of(context).translate('nav_home'),
         ),
         NavigationDestination(
-          icon: Icon(Icons.confirmation_num_outlined),
-          selectedIcon: Icon(Icons.confirmation_num),
+          icon: _BadgeIcon(
+            icon: Icons.confirmation_num_outlined,
+            selectedIcon: Icons.confirmation_num,
+            selected: false,
+            count: badgeCounts.ticketCount,
+            color: const Color(0xFF1D4ED8),
+          ),
+          selectedIcon: _BadgeIcon(
+            icon: Icons.confirmation_num_outlined,
+            selectedIcon: Icons.confirmation_num,
+            selected: true,
+            count: badgeCounts.ticketCount,
+            color: const Color(0xFF1D4ED8),
+          ),
           label: AppLocalizations.of(context).translate('nav_my_tickets'),
         ),
         NavigationDestination(
-          icon: _NotificationBadgeIcon(store: store),
-          selectedIcon: _NotificationBadgeIcon(store: store, selected: true),
+          icon: _BadgeIcon(
+            icon: Icons.notifications_outlined,
+            selectedIcon: Icons.notifications,
+            selected: false,
+            count: badgeCounts.notificationCount,
+            color: Colors.red,
+          ),
+          selectedIcon: _BadgeIcon(
+            icon: Icons.notifications_outlined,
+            selectedIcon: Icons.notifications,
+            selected: true,
+            count: badgeCounts.notificationCount,
+            color: Colors.red,
+          ),
           label: AppLocalizations.of(context).translate('nav_alerts'),
         ),
       ],
@@ -180,68 +204,58 @@ Widget _buildBottomNav({
   );
 }
 
-/// Icon widget for the notifications tab that shows a red badge with the
-/// unread notification count.
-class _NotificationBadgeIcon extends StatefulWidget {
-  final LocalNotificationStore store;
+/// Icon widget for a bottom-nav destination that shows a badge with a count.
+/// Counts above 9 are shown as "9+".
+class _BadgeIcon extends StatelessWidget {
+  final IconData icon;
+  final IconData selectedIcon;
   final bool selected;
+  final int count;
+  final Color color;
 
-  const _NotificationBadgeIcon({required this.store, this.selected = false});
-
-  @override
-  State<_NotificationBadgeIcon> createState() => _NotificationBadgeIconState();
-}
-
-class _NotificationBadgeIconState extends State<_NotificationBadgeIcon> {
-  int _unreadCount = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadCount();
-  }
-
-  Future<void> _loadCount() async {
-    final notifications = await widget.store.getAll();
-    if (!mounted) return;
-    final count = notifications.where((n) => !n.read).length;
-    setState(() => _unreadCount = count);
-  }
+  const _BadgeIcon({
+    required this.icon,
+    required this.selectedIcon,
+    required this.selected,
+    required this.count,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final icon = Icon(
-      widget.selected ? Icons.notifications : Icons.notifications_outlined,
-    );
-
-    if (_unreadCount == 0) return icon;
+    final displayed = count > 9 ? '9+' : '$count';
 
     return Stack(
       clipBehavior: Clip.none,
       children: [
-        icon,
-        Positioned(
-          right: -2,
-          top: -2,
-          child: Container(
-            padding: const EdgeInsets.all(4),
-            decoration: const BoxDecoration(
-              color: Colors.red,
-              shape: BoxShape.circle,
-            ),
-            constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
-            child: Text(
-              _unreadCount > 99 ? '99+' : '$_unreadCount',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 9,
-                fontWeight: FontWeight.w700,
-                height: 1,
+        Icon(selected ? selectedIcon : icon),
+        if (count > 0)
+          Positioned(
+            right: -6,
+            top: -4,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(9),
               ),
-              textAlign: TextAlign.center,
+              constraints: const BoxConstraints(
+                minWidth: 18,
+                minHeight: 16,
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                displayed,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  height: 1,
+                ),
+                textAlign: TextAlign.center,
+              ),
             ),
           ),
-        ),
       ],
     );
   }

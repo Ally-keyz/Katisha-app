@@ -27,7 +27,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
     if (!mounted) return;
     if (apiClient.isAuthenticated) {
-      context.go('/home');
+      // Start at the language selection screen on every app launch, so a
+      // refresh never drops the user straight into the booking wizard.
+      context.go('/onboarding');
     } else {
       context.go('/welcome');
     }

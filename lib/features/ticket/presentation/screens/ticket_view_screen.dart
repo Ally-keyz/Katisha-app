@@ -1,3 +1,6 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -5,6 +8,10 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/platform/badge_counts.dart';
+import '../../../../core/platform/local_ticket_store.dart';
+import '../../../../core/platform/platform_providers.dart';
+import '../../../../core/platform/screen_security.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -27,6 +34,7 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
   bool _loading = true;
   String? _error;
   String? _imageUrl;
+  String? _localImagePath;
   Map<String, dynamic>? _ticketData;
 
   @override
@@ -35,32 +43,95 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
     _loadTicket();
   }
 
+  @override
+  void dispose() {
+    super.dispose();
+    ScreenSecurity.disable();
+  }
+
   Future<void> _loadTicket() async {
     setState(() {
       _loading = true;
       _error = null;
     });
 
+    await ScreenSecurity.enable();
+
+    // 1) Show locally cached ticket immediately (works offline).
+    final localStore = ref.read(localTicketStoreProvider);
+    final cached = await localStore.getBooking(widget.bookingId);
+    final localImage = await localStore.getTicketImagePath(widget.bookingId);
+    if (!mounted) return;
+    if (cached != null) {
+      setState(() {
+        _ticketData = cached;
+        _localImagePath = localImage;
+        _loading = false;
+      });
+    }
+
+    // 2) Refresh from the network and update the local cache.
     final repo = ref.read(_myBookingsRepoProvider);
     final result = await repo.viewTicket(widget.bookingId);
 
     if (!mounted) return;
 
     result.fold(
-      (failure) => setState(() {
-        _error = failure.message;
-        _loading = false;
-      }),
-      (data) {
+      (failure) {
+        if (_ticketData == null) {
+          setState(() {
+            _error = failure.message;
+            _loading = false;
+          });
+        }
+      },
+      (data) async {
         final ticket = data['ticket'] as Map<String, dynamic>?;
         final booking = data['booking'] as Map<String, dynamic>?;
+        final imageUrl = ticket?['imageUrl'] as String?;
+
+        if (booking != null) {
+          await localStore.cacheBooking(widget.bookingId, booking);
+        }
+
+        if (imageUrl != null && imageUrl.isNotEmpty) {
+          // Auto-download the ticket image into app-private storage.
+          _downloadPrivateImage(localStore, imageUrl);
+        }
+
+        if (!mounted) return;
         setState(() {
-          _imageUrl = ticket?['imageUrl'] as String?;
-          _ticketData = booking;
+          _imageUrl = imageUrl;
+          if (booking != null) _ticketData = booking;
           _loading = false;
+          _error = null;
         });
+
+        ref.read(badgeCountsProvider.notifier).refresh();
       },
     );
+  }
+
+  /// Downloads the ticket image into the app-private folder so it stays
+  /// visible offline and never appears in the gallery or public file manager.
+  Future<void> _downloadPrivateImage(
+    LocalTicketStore localStore,
+    String imageUrl,
+  ) async {
+    try {
+      final api = ref.read(apiClientProvider);
+      final response = await api.downloadBytes(imageUrl);
+      final bytes = response.data;
+      if (bytes is Uint8List || bytes is List<int>) {
+        final path = await localStore.saveTicketImage(
+          widget.bookingId,
+          Uint8List.fromList(bytes as List<int>),
+        );
+        if (path != null && mounted) {
+          setState(() => _localImagePath = path);
+        }
+      }
+    } catch (_) {}
   }
 
   @override
@@ -268,28 +339,48 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
         ],
       ),
       clipBehavior: Clip.antiAlias,
-      child: _imageUrl != null
-          ? CachedNetworkImage(
-              imageUrl: _imageUrl!,
-              width: double.infinity,
-              fit: BoxFit.fitWidth,
-              placeholder: (_, __) => const SizedBox(
-                height: 200,
-                child: Center(
-                  child: SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                ),
-              ),
-              errorWidget: (_, __, ___) => _buildQrFallback(),
-            )
-          : _buildQrFallback(),
+      child: _buildTicketImageContent(),
     );
+  }
+
+  Widget _buildTicketImageContent() {
+    // Prefer the locally stored (private) image so the ticket works offline
+    // and the image never has to be re-fetched from the network.
+    final localPath = _localImagePath;
+    final remote = _imageUrl;
+
+    if (localPath != null && localPath.isNotEmpty) {
+      return Image.file(
+        File(localPath),
+        width: double.infinity,
+        fit: BoxFit.fitWidth,
+        errorBuilder: (_, __, ___) => _buildQrFallback(),
+      );
+    }
+
+    if (remote != null && remote.isNotEmpty) {
+      return CachedNetworkImage(
+        imageUrl: remote,
+        width: double.infinity,
+        fit: BoxFit.fitWidth,
+        placeholder: (_, __) => const SizedBox(
+          height: 200,
+          child: Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: AppColors.primary,
+              ),
+            ),
+          ),
+        ),
+        errorWidget: (_, __, ___) => _buildQrFallback(),
+      );
+    }
+
+    return _buildQrFallback();
   }
 
   Widget _buildQrFallback() {

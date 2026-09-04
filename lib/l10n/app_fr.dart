@@ -292,6 +292,7 @@ class AppFr {
     'loading_trips': 'Chargement de vos voyages...',
     'login_to_view': 'Veuillez vous connecter pour voir vos voyages.',
     'show_ticket': 'Veuillez présenter ce billet à l’agent d’embarquement lors de la montée.',
+    'show_ticket_officer': 'Présentez ce billet à l’agent d’embarquement',
     'login_required': 'Connexion requise',
     'login_to_see': 'Veuillez vous connecter pour voir vos voyages.',
 

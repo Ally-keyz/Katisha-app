@@ -1,3 +1,6 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -5,6 +8,9 @@ import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../../core/error/failures.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/platform/badge_counts.dart';
+import '../../../../core/platform/platform_providers.dart';
+import '../../../../core/platform/screen_security.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/widgets/katisha_app_bar.dart';
 import '../../../../l10n/app_localizations.dart';
@@ -61,16 +67,36 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
     final result = await _repo.getMyBookings(_page, 50);
     if (!mounted) return;
     result.fold(
-      (failure) => setState(() {
-        // A session/auth failure just means we can't reach the user's
-        // bookings (e.g. no session from a prior guest booking). We show the
-        // empty "no tickets yet" state with a Make a Booking button instead of
-        // a blocking error, matching the web frontend behaviour for users who
-        // register when purchasing a ticket.
-        _error = failure is AuthFailure ? null : failure.message;
-        _loading = false;
-      }),
-      (response) {
+      (failure) async {
+        // Offline fallback: show tickets cached locally so the list still works
+        // without internet.
+        final localStore = ref.read(localTicketStoreProvider);
+        final cached = await localStore.getCachedBookings();
+        if (!mounted) return;
+        final cachedBookings = cached
+            .map((json) => Booking.fromJson(json))
+            .where(_isNonExpired)
+            .toList();
+        if (cachedBookings.isNotEmpty) {
+          setState(() {
+            _bookings = cachedBookings;
+            _hasMore = false;
+            _loading = false;
+            _error = null;
+          });
+        } else {
+          setState(() {
+            // A session/auth failure just means we can't reach the user's
+            // bookings (e.g. no session from a prior guest booking). We show the
+            // empty "no tickets yet" state with a Make a Booking button instead of
+            // a blocking error, matching the web frontend behaviour for users who
+            // register when purchasing a ticket.
+            _error = failure is AuthFailure ? null : failure.message;
+            _loading = false;
+          });
+        }
+      },
+      (response) async {
         final nonExpired = response.bookings.where(_isNonExpired).toList();
         setState(() {
           if (_page == 1) {
@@ -82,8 +108,61 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
           _loading = false;
           _error = null;
         });
+
+        // Cache each ticket locally so it can be shown offline.
+        final localStore = ref.read(localTicketStoreProvider);
+        for (final booking in response.bookings) {
+          await localStore.cacheBooking(booking.id, _bookingToJson(booking));
+        }
+        // Pre-download ticket images into app-private storage automatically.
+        _preCacheTicketImages(response.bookings);
+        ref.read(badgeCountsProvider.notifier).refresh();
       },
     );
+  }
+
+  /// Downloads any ticket images not yet stored locally, so they are available
+  /// offline and never exposed in the gallery or public file manager.
+  Future<void> _preCacheTicketImages(List<Booking> bookings) async {
+    final store = ref.read(localTicketStoreProvider);
+    final api = ref.read(apiClientProvider);
+    for (final booking in bookings) {
+      final imageUrl = booking.ticketImage;
+      if (imageUrl == null || imageUrl.isEmpty) continue;
+      final exists = await store.getTicketImagePath(booking.id);
+      if (exists != null) continue;
+      try {
+        final response = await api.downloadBytes(imageUrl);
+        final data = response.data;
+        if (data is List<int>) {
+          await store.saveTicketImage(
+            booking.id,
+            Uint8List.fromList(data),
+          );
+        }
+      } catch (_) {}
+    }
+  }
+
+  Map<String, dynamic> _bookingToJson(Booking booking) {
+    return {
+      'id': booking.id,
+      'referenceCode': booking.referenceCode,
+      'origin': booking.origin,
+      'destination': booking.destination,
+      'pickupPoint': booking.pickupPoint,
+      'travelDate': booking.travelDate?.toIso8601String(),
+      'travelTime': booking.travelTime,
+      'seats': booking.seats,
+      'seatNumbers': booking.seatNumbers,
+      'status': booking.status,
+      'paymentStatus': booking.paymentStatus,
+      'paymentMethod': booking.paymentMethod,
+      'agency': booking.agency != null
+          ? {'id': booking.agency!.id, 'name': booking.agency!.name}
+          : null,
+      'totalAmount': booking.totalAmount,
+    };
   }
 
   @override
@@ -368,7 +447,7 @@ class _BookingCard extends StatelessWidget {
         barrierDismissible: true,
         barrierColor: Colors.black.withOpacity(0.88),
         pageBuilder: (context, animation, secondaryAnimation) {
-          return _TicketModal(ticketImage: booking.ticketImage!);
+          return _TicketModal(booking: booking);
         },
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           final curved = CurvedAnimation(
@@ -576,10 +655,126 @@ class _MetaChip extends StatelessWidget {
 
 // --- Ticket Modal -------------------------------------------------------------
 
-class _TicketModal extends StatelessWidget {
-  final String ticketImage;
+class _TicketModal extends ConsumerStatefulWidget {
+  final Booking booking;
 
-  const _TicketModal({required this.ticketImage});
+  const _TicketModal({required this.booking});
+
+  @override
+  ConsumerState<_TicketModal> createState() => _TicketModalState();
+}
+
+class _TicketModalState extends ConsumerState<_TicketModal> {
+  String? _localImagePath;
+
+  @override
+  void initState() {
+    super.initState();
+    ScreenSecurity.enable();
+    _resolveLocalImage();
+  }
+
+  @override
+  void dispose() {
+    ScreenSecurity.disable();
+    super.dispose();
+  }
+
+  Future<void> _resolveLocalImage() async {
+    final store = ref.read(localTicketStoreProvider);
+    final path = await store.getTicketImagePath(widget.booking.id);
+    if (!mounted) return;
+    if (path != null) {
+      setState(() => _localImagePath = path);
+      return;
+    }
+
+    // Auto-download the ticket image into app-private storage if it has not
+    // been fetched yet, so the modal works offline too.
+    final imageUrl = widget.booking.ticketImage;
+    if (imageUrl == null || imageUrl.isEmpty) return;
+    try {
+      final api = ref.read(apiClientProvider);
+      final response = await api.downloadBytes(imageUrl);
+      final data = response.data;
+      if (data is List<int>) {
+        final saved = await store.saveTicketImage(
+          widget.booking.id,
+          Uint8List.fromList(data),
+        );
+        if (saved != null && mounted) {
+          setState(() => _localImagePath = saved);
+        }
+      }
+    } catch (_) {}
+  }
+
+  Widget _buildModalImageLoad() {
+    return SizedBox(
+      height: 280,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(
+              width: 32,
+              height: 32,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                color: AppColors.primary,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Loading ticket...',
+              style: TextStyle(fontSize: 13, color: AppColors.textSub),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModalImageError() {
+    return Container(
+      height: 280,
+      color: AppColors.surface,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: AppColors.primaryLight,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.broken_image_rounded,
+                size: 28,
+                color: AppColors.primary,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Ticket unavailable',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSub,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Tap to dismiss',
+              style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -588,6 +783,11 @@ class _TicketModal extends StatelessWidget {
     // Ticket dimensions: 88% width, flexible height up to 78%
     final ticketWidth = screenSize.width * 0.88;
     final ticketHeight = screenSize.height * 0.78;
+
+    final localImagePath = _localImagePath;
+    final hasLocalImage =
+        localImagePath != null && localImagePath.isNotEmpty;
+    final ticketImage = widget.booking.ticketImage;
 
     return GestureDetector(
       onTap: () => Navigator.of(context).pop(),
@@ -623,80 +823,27 @@ class _TicketModal extends StatelessWidget {
                           ],
                         ),
                         clipBehavior: Clip.antiAlias,
-                        child: CachedNetworkImage(
-                          imageUrl: ticketImage,
-                          fit: BoxFit.fitWidth,
-                          alignment: Alignment.topCenter,
-                          memCacheWidth:
-                              (ticketWidth * MediaQuery.of(context).devicePixelRatio).toInt(),
-                          placeholder: (_, __) => SizedBox(
-                            height: 280,
-                            child: Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  SizedBox(
-                                    width: 32,
-                                    height: 32,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.5,
-                                      color: AppColors.primary,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    'Loading ticket...',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: AppColors.textSub,
-                                    ),
-                                  ),
-                                ],
+                        child: hasLocalImage
+                            ? Image.file(
+                                File(localImagePath),
+                                fit: BoxFit.fitWidth,
+                                alignment: Alignment.topCenter,
+                                errorBuilder: (_, __, ___) =>
+                                    _buildModalImageLoad(),
+                              )
+                            : CachedNetworkImage(
+                                imageUrl: ticketImage ?? '',
+                                fit: BoxFit.fitWidth,
+                                alignment: Alignment.topCenter,
+                                memCacheWidth: (ticketWidth *
+                                        MediaQuery.of(context)
+                                            .devicePixelRatio)
+                                    .toInt(),
+                                placeholder: (_, __) =>
+                                    _buildModalImageLoad(),
+                                errorWidget: (_, __, ___) =>
+                                    _buildModalImageError(),
                               ),
-                            ),
-                          ),
-                          errorWidget: (_, __, ___) => Container(
-                            height: 280,
-                            color: AppColors.surface,
-                            child: Center(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 56,
-                                    height: 56,
-                                    decoration: BoxDecoration(
-                                      color: AppColors.primaryLight,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(
-                                      Icons.broken_image_rounded,
-                                      size: 28,
-                                      color: AppColors.primary,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    'Ticket unavailable',
-                                    style: TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w600,
-                                      color: AppColors.textSub,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Tap to dismiss',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: AppColors.textMuted,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
                       ),
 
                       const SizedBox(height: 16),
@@ -736,7 +883,8 @@ class _TicketModal extends StatelessWidget {
                             const SizedBox(width: 10),
                             Flexible(
                               child: Text(
-                                'Show this ticket to the boarding officer',
+                                AppLocalizations.of(context)
+                                    .translate('show_ticket_officer'),
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   color: AppColors.text,

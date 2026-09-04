@@ -287,6 +287,7 @@ class AppEn {
     'loading_trips': 'Loading your trips...',
     'login_to_view': 'Please log in to view your trips.',
     'show_ticket': 'Please show this ticket to the boarding officer when boarding.',
+    'show_ticket_officer': 'Show this ticket to the boarding officer',
     'login_required': 'Login Required',
     'login_to_see': 'Please log in to view your trips.',
 

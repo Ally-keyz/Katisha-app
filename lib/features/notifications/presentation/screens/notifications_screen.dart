@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
+import '../../../../core/error/failures.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/platform/platform_providers.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -50,14 +51,42 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       _notifications = [];
     }
     setState(() => _loading = true);
+
+    // If the user is not signed in, don't hit the API (it would return a
+    // "session expired" error); just show the locally stored notifications.
+    if (!ref.read(apiClientProvider).isAuthenticated) {
+      final local = await ref.read(localNotificationStoreProvider).getAll();
+      if (!mounted) return;
+      setState(() {
+        _notifications = [...local];
+        _error = null;
+        _loading = false;
+        _loadingMore = false;
+        _hasMore = false;
+      });
+      return;
+    }
+
     final result = await _repo.getNotifications(_page, 20);
     if (!mounted) return;
     result.fold(
-      (failure) => setState(() {
-        _error = failure.message;
-        _loading = false;
-        _loadingMore = false;
-      }),
+      (failure) {
+        // An expired/invalid session behaves like the signed-out state: show
+        // the empty "no notifications" screen instead of an error.
+        if (failure is AuthFailure || !ref.read(apiClientProvider).isAuthenticated) {
+          setState(() {
+            _error = null;
+            _loading = false;
+            _loadingMore = false;
+          });
+        } else {
+          setState(() {
+            _error = failure.message;
+            _loading = false;
+            _loadingMore = false;
+          });
+        }
+      },
       (response) async {
         final local = await ref
             .read(localNotificationStoreProvider)
@@ -361,17 +390,13 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
             ),
             const SizedBox(height: AppSpacing.lg),
             Text(
-              isLoggedIn
-                  ? l10n.translate('no_notifications')
-                  : 'No notifications yet',
+              l10n.translate('no_notifications'),
               style: AppTypography.titleMedium
                   .copyWith(color: AppColors.textSub),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              isLoggedIn
-                  ? l10n.translate('no_notifications_subtitle')
-                  : 'Book a trip and you will see updates about your journey here.',
+              l10n.translate('no_notifications_subtitle'),
               textAlign: TextAlign.center,
               style: AppTypography.bodySmall
                   .copyWith(color: AppColors.textMuted),
@@ -392,9 +417,9 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                     elevation: 0,
                   ),
                   icon: const Icon(Icons.directions_bus_outlined, size: 18),
-                  label: const Text(
-                    'Make a booking',
-                    style: TextStyle(
+                  label: Text(
+                    l10n.translate('make_booking'),
+                    style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
                     ),

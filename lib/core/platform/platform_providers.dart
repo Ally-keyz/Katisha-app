@@ -7,6 +7,7 @@ import '../network/socket_service_impl.dart';
 import 'file_service.dart';
 import 'file_service_impl.dart';
 import 'local_notification_store.dart';
+import 'local_ticket_store.dart';
 import 'notification_service.dart';
 import 'notification_service_impl.dart';
 import 'print_service.dart';
@@ -20,6 +21,10 @@ final notificationServiceProvider = Provider<NotificationService>((ref) {
 
 final localNotificationStoreProvider = Provider<LocalNotificationStore>((ref) {
   throw StateError('localNotificationStoreProvider must be overridden');
+});
+
+final localTicketStoreProvider = Provider<LocalTicketStore>((ref) {
+  throw StateError('localTicketStoreProvider must be overridden');
 });
 
 final soundServiceProvider = Provider<SoundService>((ref) {
@@ -49,6 +54,7 @@ Future<List<Override>> createAppOverrides() async {
   await notificationService.initialize();
 
   final localStore = LocalNotificationStore(prefs);
+  final localTicketStore = LocalTicketStore(prefs);
 
   final socketService = SocketServiceImpl();
 
@@ -58,6 +64,7 @@ Future<List<Override>> createAppOverrides() async {
       return notificationService;
     }),
     localNotificationStoreProvider.overrideWithValue(localStore),
+    localTicketStoreProvider.overrideWithValue(localTicketStore),
     socketServiceProvider.overrideWith((ref) {
       ref.onDispose(socketService.dispose);
       return socketService;

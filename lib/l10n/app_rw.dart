@@ -139,7 +139,7 @@ class AppRw {
 
     // ── Notifications ──────────────────────────
     'notifications': 'Notifications',
-    'no_notifications': 'Nta makuru ahari.',
+    'no_notifications': 'Nta notifications zihari.',
     'mark_all_read': 'Soma byose',
     'journey_alert': 'Amabwiriza y\'Urugendo',
     'journey_starts_soon': 'Urugendo rwawe rutangira mu minota 20',
@@ -289,6 +289,7 @@ class AppRw {
     'loading_trips': 'Birimo kupakira urugendo rwawe...',
     'login_to_view': 'Nyamuneka winjire kugira ngo urebe urugendo rwawe.',
     'show_ticket': 'Nyamuneka werekane iyi tike abakozi b\'ingendo igihe utangiye urugendo.',
+    'show_ticket_officer': 'Erekana iyi ticket ugiye kwinjira muri bus',
     'login_required': 'Injira Biragusabwa',
     'login_to_see': 'Nyamuneka winjire kugira ngo urebe urugendo rwawe.',
 

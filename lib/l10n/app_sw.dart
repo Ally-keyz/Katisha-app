@@ -290,6 +290,7 @@ class AppSw {
     'loading_trips': 'Inapakia safari zako...',
     'login_to_view': 'Tafadhali ingia kutazama safari zako.',
     'show_ticket': 'Tafadhali onyesha tiketi hii kwa afisa wa kuingia wakati wa kupanda.',
+    'show_ticket_officer': 'Onyesha tiketi hii kwa afisa anayeingia',
     'login_required': 'Kuingia Kunahitajika',
     'login_to_see': 'Tafadhali ingia kutazama safari zako.',
 
