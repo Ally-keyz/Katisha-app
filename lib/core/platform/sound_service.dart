@@ -56,7 +56,7 @@ class SoundService {
         ));
       }
 
-      await _player!.play(AssetSource(path), volume: 1.0);
+      await _player!.play(AssetSource(path), volume: 0.35);
       dev.log('[SoundService] Audio started playing');
     } catch (e) {
       dev.log('[SoundService] Audio failed: $e');
