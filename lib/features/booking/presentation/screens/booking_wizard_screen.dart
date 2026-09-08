@@ -101,8 +101,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // Step 2: Schedule
   DateTime _selectedDate = DateTime.now();
   DateTime _calendarMonth = DateTime.now();
+  bool _datePicked = false;
   String? _selectedTime;
-  bool _showCalendar = true;
 
   // Step 3: Seats
   int _seatCount = 1;
@@ -239,6 +239,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         if (_selectedRoute == null) return AppLocalizations.of(context).translate('select_agency_continue');
         return null;
       case 2:
+        if (!_datePicked) return AppLocalizations.of(context).translate('select_travel_date');
         if (_selectedTime == null) return AppLocalizations.of(context).translate('select_departure_time');
         return null;
       case 3:
@@ -433,8 +434,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
       _selectedDate = DateTime.now();
       _calendarMonth = DateTime.now();
+      _datePicked = false;
       _selectedTime = null;
-      _showCalendar = true;
 
       _seatCount = 1;
 
@@ -1897,70 +1898,122 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
         ),
         const SizedBox(height: AppSpacing.xl),
-        if (_showCalendar) ...[
-          _buildLabel(l10n.translate('travel_date')),
-          const SizedBox(height: AppSpacing.sm),
-          _buildCalendar(),
-        ] else ...[
-          Align(
-            alignment: Alignment.centerRight,
-            child: GestureDetector(
-              onTap: () => setState(() => _showCalendar = true),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.edit, size: 16, color: AppColors.primary),
-                  const SizedBox(width: AppSpacing.xs),
-                  Text(
-                    l10n.translate('edit_date'),
-                    style: AppTypography.bodySmall.copyWith(
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-        const SizedBox(height: AppSpacing.xl),
+        _buildLocationSelector(
+          label: l10n.translate('travel_date'),
+          icon: Icons.calendar_today_outlined,
+          value: _datePicked
+              ? '${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}'
+              : l10n.translate('select_travel_date'),
+          onTap: _openDatePickerModal,
+        ),
+        const SizedBox(height: AppSpacing.lg),
         Column(
           key: _departureTimeKey,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildLabel(
-              l10n.translate('departure_time'),
-              style: AppTypography.headlineLarge.copyWith(
-                color: AppColors.text,
-                fontWeight: FontWeight.w800,
-              ),
+            _buildLocationSelector(
+              label: l10n.translate('departure_time'),
+              icon: Icons.access_time,
+              value: _selectedTime ?? l10n.translate('select_travel_hour'),
+              onTap: _openTimePickerModal,
             ),
-            const SizedBox(height: AppSpacing.sm),
-            Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-              child: AnimatedBuilder(
-                animation: _blinkController,
-                builder: (context, _) {
-                  final t = Curves.easeInOut.transform(_blinkController.value);
-                  final color = Color.lerp(AppColors.primary, AppColors.textMuted, t)!;
-                  return Text(
-                    l10n.translate('select_travel_hour'),
-                    style: AppTypography.bodySmall.copyWith(
-                      color: color,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  );
-                },
-              ),
-            ),
-            _buildTimeSlots(),
           ],
         ),
       ],
     );
   }
 
-  Widget _buildCalendar() {
+  // Opens the travel-date calendar from a bottom sheet (mirrors the
+  // destination picker: modal slides up from the bottom).
+  Future<void> _openDatePickerModal() async {
+    final l10n = AppLocalizations.of(context);
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppSpacing.radiusMd)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return SafeArea(
+              top: false,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l10n.translate('travel_date'),
+                      style: AppTypography.titleLarge.copyWith(
+                        color: AppColors.text,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _buildCalendar(
+                      onDatePicked: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // Opens the departure-time picker from a bottom sheet (mirrors the
+  // destination picker: modal slides up from the bottom).
+  Future<void> _openTimePickerModal() async {
+    final l10n = AppLocalizations.of(context);
+    if (!_datePicked) {
+      await _openDatePickerModal();
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppSpacing.radiusMd)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            return SafeArea(
+              top: false,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      l10n.translate('departure_time'),
+                      style: AppTypography.titleLarge.copyWith(
+                        color: AppColors.text,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _buildTimeSlots(
+                      onTimePicked: () => Navigator.pop(ctx),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildCalendar({VoidCallback? onDatePicked}) {
     final year = _calendarMonth.year;
     final month = _calendarMonth.month;
     final firstDay = DateTime(year, month, 1);
@@ -2057,12 +2110,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 onTap: () {
                   setState(() {
                     _selectedDate = date;
+                    _datePicked = true;
                     _selectedTime = null;
-                    _showCalendar = false;
                   });
                   // Bring the departure-time selection into view after a date
                   // is picked.
                   _scrollToDepartureTime();
+                  onDatePicked?.call();
                 },
                 child: Center(
                   child: Container(
@@ -2102,7 +2156,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     return slots;
   }
 
-  Widget _buildTimeSlots() {
+  Widget _buildTimeSlots({VoidCallback? onTimePicked}) {
     final l10n = AppLocalizations.of(context);
     // Show only the selected route's real departure times (matching the web:
     // departureTimes when configured, otherwise the 30-minute slot grid).
@@ -2170,6 +2224,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 onTap: () {
                   setState(() => _selectedTime = slot);
                   _scheduleAutoAdvance();
+                  onTimePicked?.call();
                 },
                 child: Container(
                   alignment: Alignment.center,
