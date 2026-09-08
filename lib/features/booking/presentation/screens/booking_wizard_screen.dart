@@ -41,19 +41,28 @@ const _sheetAnimDuration = Duration(milliseconds: 220);
 const _payoutRate = 0.01;
 const _payoutFixed = 60;
 
-/// East-African destination list mirroring the web BookingWizard's route
+/// East-African destination groups mirroring the web BookingWizard's route
 /// catalogue (Kigali origin + cross-border cities). Booking is East Africa
-/// only — there is no Rwanda-intercity journey type anymore.
-const _eastAfricaDestinations = [
-  'Kigali', 'Nairobi', 'Mombasa', 'Kisumu', 'Nakuru', 'Eldoret', 'Busia',
-  'Kampala', 'Entebbe', 'Jinja', 'Mbarara', 'Gulu', 'Fort Portal', 'Ntugamo',
-  'Dar es Salaam', 'Morogoro', 'Dodoma', 'Tunduma', 'Mbeya', 'Sumbawanga',
-  'Moshi', 'Arusha', 'Manyoni', 'Singida', 'Bukoba', 'Kigoma', 'Kabanga',
-  'Kahama', 'Shinyanga', 'Iringa', 'Mwanza', 'Nzega', 'Tabora', 'Zanzibar',
-  'Lusaka', 'Lilongwe', 'Kasumuru Border', 'Nampula', 'Johannesburg',
-  'Bulawayo', 'Harare', 'Mutambashwala', 'Lubumbashi', 'Kasumbalesa',
-  'Juba', 'Bujumbura',
-];
+/// only — there is no Rwanda-intercity journey type anymore. Groups are keyed
+/// by destination country (same labels the web picker uses), with cities
+/// sorted alphabetically. 'Rwanda' only holds Kigali and is hidden from the
+/// destination picker, exactly like the web (origin stays fixed to Kigali).
+const _eastAfricaByCountry = <String, List<String>>{
+  'DR Congo': ['Kasumbalesa', 'Lubumbashi'],
+  'Kenya': ['Busia', 'Kisumu', 'Nairobi', 'Nakuru'],
+  'Malawi': ['Kasumuru Border', 'Lilongwe'],
+  'Mozambique': ['Nampula'],
+  'South Africa': ['Johannesburg'],
+  'Tanzania': [
+    'Arusha', 'Bukoba', 'Dar es Salaam', 'Dodoma', 'Iringa', 'Kabanga',
+    'Kahama', 'Kigoma', 'Manyoni', 'Mbeya', 'Morogoro', 'Moshi', 'Mwanza',
+    'Nzega', 'Shinyanga', 'Singida', 'Sumbawanga', 'Tabora', 'Tunduma',
+  ],
+  'Uganda': ['Busia', 'Jinja', 'Kampala', 'Mbarara', 'Ntugamo'],
+  'Zambia': ['Lusaka', 'Mutambashwala'],
+  'Zimbabwe': ['Bulawayo', 'Harare'],
+  'Rwanda': ['Kigali'],
+};
 
 final _bookingRepoProvider = Provider<BookingRepository>((ref) {
   return BookingRepository(ref.read(apiClientProvider));
@@ -76,6 +85,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // Step 0: Route (East African cross-border travel only)
   String? _origin = 'Kigali';
   String? _destination;
+  bool _destinationPickerAutoOpened = false;
 
   // Step 1: Agency
   List<RouteModel> _routes = [];
@@ -158,7 +168,20 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _applyExtraParams();
+      _autoOpenDestinationPicker();
     });
+  }
+
+  /// Opens the destination picker automatically when the wizard starts on the
+  /// route step with no destination chosen yet (origin already defaults to
+  /// Kigali and the city groups are local constants, so nothing is fetched).
+  void _autoOpenDestinationPicker() {
+    if (_destinationPickerAutoOpened) return;
+    if (_currentStep != 0) return;
+    final hasDestination = _destination != null && _destination!.isNotEmpty;
+    if (hasDestination) return;
+    _destinationPickerAutoOpened = true;
+    _openDestinationPicker();
   }
 
   @override
@@ -1153,8 +1176,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   // ── Step 0: Route ──
 
-  List<String> get _scopedDestinations => _eastAfricaDestinations;
-
   Widget _buildRouteStep() {
     final l10n = AppLocalizations.of(context);
     return Column(
@@ -1199,7 +1220,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       title: l10n.translate('select_destination_picker'),
       currentValue: _destination,
       exclude: _origin,
-      options: _scopedDestinations,
+      groups: _eastAfricaByCountry,
+      showSearch: true,
       onSelected: (v) {
         setState(() => _destination = v);
         _scheduleAutoAdvance();
@@ -1213,7 +1235,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       title: l10n.translate('select_origin'),
       currentValue: _origin,
       exclude: _destination,
-      options: _scopedDestinations,
+      groups: _eastAfricaByCountry,
+      originCountry: true,
       showSearch: true,
       onSelected: (v) {
         setState(() => _origin = v);
@@ -1262,12 +1285,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     String? exclude,
     String? currentValue,
     List<String>? options,
+    Map<String, List<String>>? groups,
+    bool originCountry = false,
     bool showSearch = false,
   }) async {
     final base = options ?? cityOptions;
     final baseFiltered = exclude != null
         ? base.where((c) => c != exclude).toList()
         : List<String>.from(base);
+    final hasGroups = groups != null;
 
     final result = await showModalBottomSheet<String>(
       context: context,
@@ -1286,6 +1312,18 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 : baseFiltered
                     .where((c) => c.toLowerCase().contains(q))
                     .toList();
+            final filteredGroups = <MapEntry<String, List<String>>>[];
+            if (groups != null) {
+              for (final entry in groups.entries) {
+                if (!originCountry && entry.key.toLowerCase() == 'rwanda') continue;
+                final cities = entry.value
+                    .where((c) =>
+                        c != exclude && (q.isEmpty || c.toLowerCase().contains(q)))
+                    .toList();
+                if (cities.isEmpty) continue;
+                filteredGroups.add(MapEntry(entry.key, cities));
+              }
+            }
             return DraggableScrollableSheet(
               initialChildSize: 0.5,
               minChildSize: 0.35,
@@ -1350,7 +1388,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     const SizedBox(height: 8),
                     const Divider(height: 1),
                     Expanded(
-                      child: filtered.isEmpty
+                      child: (hasGroups ? filteredGroups.isEmpty : filtered.isEmpty)
                           ? Center(
                               child: Text(
                                 'No locations found',
@@ -1359,33 +1397,77 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                                 ),
                               ),
                             )
-                          : ListView.separated(
-                              controller: scrollController,
-                              padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                              itemCount: filtered.length,
-                              separatorBuilder: (_, _2) => const Divider(height: 1, indent: 16, endIndent: 16),
-                              itemBuilder: (ctx, index) {
-                                final city = filtered[index];
-                                final isSelected = city == currentValue;
-                                return ListTile(
-                                  dense: true,
-                                  selected: isSelected,
-                                  selectedTileColor: AppColors.primaryLight,
-                                  leading: Icon(
-                                    isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                                    color: isSelected ? AppColors.primary : AppColors.textMuted,
-                                    size: 20,
-                                  ),
-                                  title: Text(
-                                    city,
-                                    style: AppTypography.bodyLarge.copyWith(
-                                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                                    ),
-                                  ),
-                                  onTap: () => Navigator.pop(ctx, city),
-                                );
-                              },
-                            ),
+                          : hasGroups
+                              ? ListView(
+                                  controller: scrollController,
+                                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                                  children: [
+                                    for (final entry in filteredGroups) ...[
+                                      Padding(
+                                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+                                        child: Text(
+                                          entry.key,
+                                          style: AppTypography.labelSmall.copyWith(
+                                            color: AppColors.textMuted,
+                                            fontWeight: FontWeight.w700,
+                                            letterSpacing: 0.6,
+                                          ),
+                                        ),
+                                      ),
+                                      for (final city in entry.value)
+                                        ListTile(
+                                          dense: true,
+                                          selected: city == currentValue,
+                                          selectedTileColor: AppColors.primaryLight,
+                                          leading: Icon(
+                                            city == currentValue
+                                                ? Icons.radio_button_checked
+                                                : Icons.radio_button_unchecked,
+                                            color: city == currentValue
+                                                ? AppColors.primary
+                                                : AppColors.textMuted,
+                                            size: 20,
+                                          ),
+                                          title: Text(
+                                            city,
+                                            style: AppTypography.bodyLarge.copyWith(
+                                              fontWeight: city == currentValue
+                                                  ? FontWeight.w600
+                                                  : FontWeight.w400,
+                                            ),
+                                          ),
+                                          onTap: () => Navigator.pop(ctx, city),
+                                        ),
+                                    ],
+                                  ],
+                                )
+                              : ListView.separated(
+                                  controller: scrollController,
+                                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                                  itemCount: filtered.length,
+                                  separatorBuilder: (_, _2) => const Divider(height: 1, indent: 16, endIndent: 16),
+                                  itemBuilder: (ctx, index) {
+                                    final city = filtered[index];
+                                    final isSelected = city == currentValue;
+                                    return ListTile(
+                                      dense: true,
+                                      selected: isSelected,
+                                      selectedTileColor: AppColors.primaryLight,
+                                      leading: Icon(
+                                        isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                                        color: isSelected ? AppColors.primary : AppColors.textMuted,
+                                        size: 20,
+                                      ),
+                                      title: Text(
+                                        city,
+                                        style: AppTypography.bodyLarge.copyWith(
+                                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                                        ),
+                                      ),
+                                      onTap: () => Navigator.pop(ctx, city),
+                                    );
+                                  },
+                                ),
                     ),
                   ],
                 );
@@ -1631,12 +1713,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   Widget _buildRouteList() {
-    final l10n = AppLocalizations.of(context);
     return Column(
       children: _routes.map((route) {
         final isSelected = _selectedRoute?.id == route.id;
         final effectivePrice = route.effectivePrice ?? route.price;
         final serviceFee = systemFeeFor(route.type, effectivePrice, 1).round();
+        final total = effectivePrice + serviceFee;
+        final oldTotal = route.price + systemFeeFor(route.type, route.price, 1).round();
 
         return Padding(
           padding: const EdgeInsets.only(bottom: AppSpacing.md),
@@ -1728,7 +1811,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       Row(
                         children: [
                           Text(
-                            '$effectivePrice RWF',
+                            '$total RWF',
                             style: AppTypography.titleLarge.copyWith(
                               color: isSelected ? AppColors.white : AppColors.primary,
                               fontWeight: FontWeight.w700,
@@ -1738,7 +1821,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                               route.effectivePrice != route.price) ...[
                             const SizedBox(width: AppSpacing.sm),
                             Text(
-                              '${route.price} RWF',
+                              '$oldTotal RWF',
                               style: AppTypography.bodySmall.copyWith(
                                 color: isSelected
                                     ? AppColors.white.withValues(alpha: 0.6)
@@ -1769,14 +1852,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                         ],
                       ),
                       const SizedBox(height: AppSpacing.xs),
-                      Text(
-                        '+$serviceFee RWF ${l10n.translate('service_fee_label')}',
-                        style: AppTypography.bodySmall.copyWith(
-                          color: isSelected
-                              ? AppColors.white.withValues(alpha: 0.85)
-                              : AppColors.textSub,
-                        ),
-                      ),
                     ],
                   ),
                 ),
@@ -2269,12 +2344,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 textAlign: TextAlign.center,
               ),
               const Divider(height: AppSpacing.xl),
-              _buildSummaryRow(l10n.translate('ticket_price'), '$fareTotal RWF'),
-              const SizedBox(height: AppSpacing.xs),
-              _buildSummaryRow(l10n.translate('katisha_service_fee'), '+$serviceFee RWF'),
-              const SizedBox(height: AppSpacing.xs),
-              _buildSummaryRow(l10n.translate('transaction_fee'), '+$onlineFee RWF'),
-              const SizedBox(height: AppSpacing.xs),
               _buildSummaryRow(l10n.translate('total'), '$onlineTotal RWF', isBold: true),
             ],
           ),
@@ -2398,12 +2467,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     ),
                     child: Column(
                       children: [
-                        _buildSummaryRow(l10n.translate('ticket_price'), '$fareTotal RWF'),
-                        const SizedBox(height: AppSpacing.xs),
-                        _buildSummaryRow(l10n.translate('katisha_service_fee'), '+$serviceFee RWF'),
-                        const SizedBox(height: AppSpacing.xs),
-                        _buildSummaryRow(l10n.translate('transaction_fee'), '+$onlineFee RWF'),
-                        const Divider(height: AppSpacing.md),
                         _buildSummaryRow(l10n.translate('total'), '$onlineTotal RWF', isBold: true),
                       ],
                     ),

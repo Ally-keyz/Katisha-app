@@ -52,8 +52,8 @@ class AppRw {
     'passengers': 'Abagenzi',
     'search_routes': 'Rondera Inzira',
     'select_origin': 'Hitamwo icity yo gutangira',
-    'select_destination': 'Hitamo Aho ugana',
-    'select_destination_picker': 'Hitamo Aho ugana',
+    'select_destination': 'Hitamo aho ugana',
+    'select_destination_picker': 'Hitamo aho ugana',
     'no_routes_found': 'Nta nzira zabonetse.',
     'select_date': 'Hitamwo itariki',
 
