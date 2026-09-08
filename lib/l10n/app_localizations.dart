@@ -96,13 +96,32 @@ const appLocalizationDelegates = <LocalizationsDelegate<dynamic>>[
   _AdaptiveCupertinoLocalizations(),
 ];
 
+const _supportedLanguageCodes = {'en', 'rw', 'sw', 'fr'};
+
+/// Returns the app language that matches the device/OS language, falling back
+/// to Kinyarwanda (the app's primary market language) when the device is
+/// English or another unsupported language. Used on first launch before any
+/// user preference is stored — the app never starts in English by default.
+Locale systemLocale() {
+  final binding = WidgetsBinding.instance;
+  if (binding == null) return const Locale('rw');
+  for (final locale in binding.platformDispatcher.locales) {
+    if (_supportedLanguageCodes.contains(locale.languageCode)) {
+      return locale.languageCode == 'en'
+          ? const Locale('rw')
+          : Locale(locale.languageCode);
+    }
+  }
+  return const Locale('rw');
+}
+
 class LanguagePreference {
   static const _key = 'vdk_language';
 
   static Future<Locale> getLocale() async {
     final prefs = await SharedPreferences.getInstance();
-    final code = prefs.getString(_key) ?? 'en';
-    return Locale(code);
+    final code = prefs.getString(_key);
+    return code == null ? systemLocale() : Locale(code);
   }
 
   static Future<void> setLocale(Locale locale) async {
@@ -112,7 +131,7 @@ class LanguagePreference {
 }
 
 final appLocaleProvider = StateProvider<Locale>((ref) {
-  return const Locale('en');
+  return systemLocale();
 });
 
 Future<void> initializeLocale(WidgetRef ref) async {

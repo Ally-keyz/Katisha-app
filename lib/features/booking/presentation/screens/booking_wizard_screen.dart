@@ -1926,7 +1926,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           key: _departureTimeKey,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildLabel(l10n.translate('departure_time')),
+            _buildLabel(
+              l10n.translate('departure_time'),
+              style: AppTypography.titleLarge.copyWith(
+                color: AppColors.text,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
             const SizedBox(height: AppSpacing.sm),
             Padding(
               padding: const EdgeInsets.only(bottom: AppSpacing.sm),
@@ -3209,14 +3215,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   // ── HELPERS ──
 
-  Widget _buildLabel(String text) {
+  Widget _buildLabel(String text, {TextStyle? style}) {
     return Text(
       text,
-      style: AppTypography.labelLarge.copyWith(
-        color: AppColors.textSub,
-        fontWeight: FontWeight.w700,
-        letterSpacing: 0.12,
-      ),
+      style: style ??
+          AppTypography.labelLarge.copyWith(
+            color: AppColors.textSub,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.12,
+          ),
     );
   }
 
