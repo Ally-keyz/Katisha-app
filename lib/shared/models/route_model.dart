@@ -84,7 +84,7 @@ class RouteModel {
       agency: agencyData is Map<String, dynamic>
           ? RouteAgency.fromJson(agencyData)
           : const RouteAgency(id: '', name: ''),
-      type: json['type'] as String? ?? 'intercity',
+      type: json['type'] as String? ?? 'east_africa',
       origin: json['origin'] as String? ?? '',
       destination: json['destination'] as String? ?? '',
       price: json['price'] as int? ?? 0,

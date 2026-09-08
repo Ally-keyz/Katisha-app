@@ -35,20 +35,23 @@ List<String> _stepLabels(BuildContext context) {
 /// Duration for the snappy, smooth bottom-sheet enter/exit animation.
 const _sheetAnimDuration = Duration(milliseconds: 220);
 
-/// Journey-type scoped destination lists matching the web BookingWizard.
-/// Intercity shows Rwanda districts; East African travel shows cross-border cities.
-const _intercityDestinations = [
-  'Kigali', 'Bugesera', 'Gatsibo', 'Kayonza',
-  'Kirehe', 'Ngoma', 'Nyagatare', 'Rwamagana', 'Burera', 'Gakenke',
-  'Gicumbi', 'Musanze', 'Rulindo', 'Gisagara', 'Huye', 'Kamonyi',
-  'Muhanga', 'Nyamagabe', 'Nyanza', 'Nyaruguru', 'Ruhango', 'Karongi',
-  'Ngororero', 'Nyabihu', 'Nyamasheke', 'Rubavu', 'Rusizi', 'Rutsiro',
-];
+/// PawaPay online payment fee — mirrors the web BookingWizard fallback:
+/// Transaction Fee = round(fare × payoutRate) + payoutFixed, with the server
+/// defaults payoutRate 1% and payoutFixed 60 RWF.
+const _payoutRate = 0.01;
+const _payoutFixed = 60;
 
+/// East-African destination list mirroring the web BookingWizard's route
+/// catalogue (Kigali origin + cross-border cities). Booking is East Africa
+/// only — there is no Rwanda-intercity journey type anymore.
 const _eastAfricaDestinations = [
-  'Nairobi', 'Mombasa', 'Kisumu', 'Nakuru', 'Eldoret',
-  'Kampala', 'Entebbe', 'Jinja', 'Mbarara', 'Gulu', 'Fort Portal',
-  'Dodoma', 'Dar es Salaam', 'Arusha', 'Mwanza', 'Mbeya', 'Zanzibar',
+  'Kigali', 'Nairobi', 'Mombasa', 'Kisumu', 'Nakuru', 'Eldoret', 'Busia',
+  'Kampala', 'Entebbe', 'Jinja', 'Mbarara', 'Gulu', 'Fort Portal', 'Ntugamo',
+  'Dar es Salaam', 'Morogoro', 'Dodoma', 'Tunduma', 'Mbeya', 'Sumbawanga',
+  'Moshi', 'Arusha', 'Manyoni', 'Singida', 'Bukoba', 'Kigoma', 'Kabanga',
+  'Kahama', 'Shinyanga', 'Iringa', 'Mwanza', 'Nzega', 'Tabora', 'Zanzibar',
+  'Lusaka', 'Lilongwe', 'Kasumuru Border', 'Nampula', 'Johannesburg',
+  'Bulawayo', 'Harare', 'Mutambashwala', 'Lubumbashi', 'Kasumbalesa',
   'Juba', 'Bujumbura',
 ];
 
@@ -70,10 +73,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   int _currentStep = 0;
   final _formKey = GlobalKey<FormState>();
 
-  // Step 0: Route
-  String? _origin;
+  // Step 0: Route (East African cross-border travel only)
+  String? _origin = 'Kigali';
   String? _destination;
-  String? _journeyType;
 
   // Step 1: Agency
   List<RouteModel> _routes = [];
@@ -95,8 +97,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // Step 3: Seats
   int _seatCount = 1;
 
-  // Step 4: Payment
-  String? _paymentMethod;
+  // Step 4: Payment (online via PawaPay is the only option; 'mom' is the
+  // default mobile-money provider recorded on the booking, matching the web's
+  // PAYMENT_METHODS default)
+  String _paymentMethod = 'mom';
   String? _paymentChannel; // 'pawapay_online' (only option)
 
   // Payment modal state (matches web flow: summary -> green button ->
@@ -104,7 +108,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   bool _isLoggedIn = false;
   String? _cachedUserName;
 
-  static const Color _payGreen = Color(0xFF22C55E);
   final _phoneController = TextEditingController();
   final _guestNameController = TextEditingController();
   final _scrollController = ScrollController();
@@ -134,20 +137,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   StreamSubscription? _paymentSub;
 
   BookingRepository get _repo => ref.read(_bookingRepoProvider);
-
-  static const _allPaymentMethods = [
-    {'id': 'mom', 'name': 'MTN MoMo', 'icon': Icons.phone_android, 'color': Color(0xFFFFCC00), 'routes': ['intercity']},
-    {'id': 'airtel', 'name': 'Airtel Money', 'icon': Icons.phone_android, 'color': Color(0xFFE40000), 'routes': ['intercity']},
-    {'id': 'mpesa', 'name': 'M-Pesa', 'icon': Icons.phone_android, 'color': Color(0xFF00A651), 'routes': ['east_africa']},
-  ];
-
-  List<Map<String, dynamic>> get _paymentMethods {
-    final routeType = _selectedRoute?.type ?? 'intercity';
-    return _allPaymentMethods.where((m) {
-      final routes = m['routes'] as List<String>;
-      return routes.contains(routeType);
-    }).toList();
-  }
 
   @override
   void initState() {
@@ -196,10 +185,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     }
     if (extra['destination'] != null) {
       _destination = extra['destination'] as String;
-      if (_journeyType == null) {
-        _journeyType = _inferJourneyType(_destination);
-      }
-      _origin = 'Kigali';
+      _origin ??= 'Kigali';
     }
     if (extra['date'] != null) {
       final d = DateTime.tryParse(extra['date'] as String);
@@ -212,17 +198,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       _selectedRoute = extra['route'] as RouteModel;
       _origin = _selectedRoute!.origin;
       _destination = _selectedRoute!.destination;
-      _journeyType = _selectedRoute!.type;
       _searchRoutes();
     }
     setState(() {});
-  }
-
-  String? _inferJourneyType(String? destination) {
-    if (destination == null) return null;
-    if (_intercityDestinations.contains(destination)) return 'intercity';
-    if (_eastAfricaDestinations.contains(destination)) return 'east_africa';
-    return null;
   }
 
   // ── Validation ──
@@ -230,7 +208,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   String? _stepError() {
     switch (_currentStep) {
       case 0:
-        if (_journeyType == null) return AppLocalizations.of(context).translate('select_journey_type');
         if (_origin == null || _origin!.isEmpty) return 'Please select an origin city';
         if (_destination == null || _destination!.isEmpty) return AppLocalizations.of(context).translate('select_destination');
         if (_origin == _destination) return 'Origin and destination must be different';
@@ -245,7 +222,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         if (_seatCount < 1) return 'At least 1 seat is required';
         return null;
       case 4:
-        if (_paymentMethod == null) return 'Please select a payment method';
         if (_phoneController.text.replaceAll(RegExp(r'[^0-9]'), '').length < 9) return 'Please enter a valid phone number';
         return null;
       default:
@@ -282,29 +258,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   bool _isTimeSlotAvailable(String time) {
-    final now = DateTime.now();
-    final isToday = _selectedDate.year == now.year &&
-        _selectedDate.month == now.month &&
-        _selectedDate.day == now.day;
-
-    final parts0 = time.split(':');
-    final slotMinutes = int.parse(parts0[0]) * 60 + int.parse(parts0[1]);
-
-    // Intercity curfew: buses do not operate between 21:30 and 04:00.
-    const intercityCurfewStart = 21 * 60 + 30; // 21:30
-    const intercityCurfewEnd = 4 * 60; // 04:00
-    if (_journeyType == 'intercity' &&
-        (slotMinutes >= intercityCurfewStart || slotMinutes < intercityCurfewEnd)) {
-      return false;
-    }
-
-    // Enforce 3-hour advance booking for today (intercity same-day).
-    if (isToday) {
-      final nowMinutes = now.hour * 60 + now.minute;
-      const minAdvanceMinutes = 3 * 60;
-      if (slotMinutes < nowMinutes + minAdvanceMinutes) return false;
-    }
-
+    // East African cross-border booking requires 2+ days advance (enforced on
+    // the calendar), so no same-day/curfew restrictions apply to time slots.
     if (_agencyWorkingHours.isEmpty) return true;
     final dayOfWeek = _selectedDate.weekday % 7;
     final relevantHours = _agencyWorkingHours.where((h) => h['dayOfWeek'] == dayOfWeek).toList();
@@ -342,11 +297,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         _searchingRoutes = false;
       }),
       (routes) => setState(() {
-        // Mirror the web: filter client-side by journey type so only routes
-        // matching the chosen type are offered.
-        _routes = _journeyType == null
-            ? routes
-            : routes.where((r) => r.type == _journeyType).toList();
+        // Mirror the web normalizeAgencyRoutes: only East African routes are
+        // bookable.
+        _routes =
+            routes.where((r) => r.type == 'east_africa').toList();
         _searchingRoutes = false;
       }),
     );
@@ -436,16 +390,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     });
   }
 
-  /// Pull-to-refresh: reset the whole wizard back to the first journey-type
-  /// selection so the user can start a fresh booking flow.
+/// Pull-to-refresh: reset the whole wizard back to the first route-selection
+/// step so the user can start a fresh booking flow.
   Future<void> _refreshWizard() async {
     _autoAdvanceTimer?.cancel();
     setState(() {
       _currentStep = 0;
       _formKey.currentState?.reset();
 
-      _journeyType = null;
-      _origin = null;
+      _origin = 'Kigali';
       _destination = null;
 
       _routes = [];
@@ -462,7 +415,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
       _seatCount = 1;
 
-      _paymentMethod = null;
       _paymentChannel = null;
 
       _phoneController.clear();
@@ -494,12 +446,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   Future<void> _submitBooking() async {
     final channel = _paymentChannel ?? 'pawapay_online';
-    if (_paymentMethod == null) {
-      setState(() {
-        _submitError = 'Please select a payment method';
-      });
-      return;
-    }
     final digits = _phoneController.text.replaceAll(RegExp(r'[^0-9]'), '');
     if (digits.length < 9) {
       setState(() {
@@ -516,7 +462,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final data = <String, dynamic>{
       'routeId': _selectedRoute!.id,
       'agencyId': _selectedRoute!.agency.id,
-      'journeyType': _selectedRoute!.type,
       'origin': _origin,
       'destination': _destination,
       'travelDate': _selectedDate.toIso8601String().substring(0, 10),
@@ -1208,168 +1153,44 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   // ── Step 0: Route ──
 
-  List<String> get _scopedDestinations =>
-      _journeyType == 'east_africa' ? _eastAfricaDestinations : _intercityDestinations;
+  List<String> get _scopedDestinations => _eastAfricaDestinations;
 
   Widget _buildRouteStep() {
     final l10n = AppLocalizations.of(context);
-    final needsType = _journeyType == null;
     return Column(
       key: const ValueKey('step-route'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: AppSpacing.lg),
         Text(
-          needsType ? l10n.translate('what_kind_of_trip') : l10n.translate('plan_your_trip'),
+          l10n.translate('plan_your_trip'),
           style: AppTypography.headlineLarge,
         ),
         const SizedBox(height: AppSpacing.sm),
         Text(
-          needsType
-              ? l10n.translate('choose_journey_type_desc')
-              : l10n.translate('choose_route_and_time'),
+          l10n.translate('choose_route_and_time'),
           style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
         ),
-        if (needsType) ...[
-          const SizedBox(height: AppSpacing.xl),
-          _buildJourneyTypeCards(),
-        ] else ...[
-          const SizedBox(height: AppSpacing.xl),
-          _buildLabel('ORIGIN'),
-          const SizedBox(height: AppSpacing.xs),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 14),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.location_on_outlined, size: 20, color: AppColors.textMuted),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  child: Text(
-                    'Kigali',
-                    style: AppTypography.bodyMedium,
-                  ),
-                ),
-                const Icon(Icons.lock_outline, size: 16, color: AppColors.textMuted),
-              ],
-            ),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-          _buildLabel('DESTINATION'),
-          const SizedBox(height: AppSpacing.xs),
-          _buildLocationSelector(
-            label: 'destination city',
-            icon: Icons.location_on_outlined,
-            value: _destination,
-            onTap: _openDestinationPicker,
-          ),
-        ],
-      ],
-    );
-  }
-
-  /// Two blue selection cards — Rwanda Intercity vs East African Travel.
-  /// Matches the web BookingWizard journey-type picker styling.
-  Widget _buildJourneyTypeCards() {
-    final l10n = AppLocalizations.of(context);
-    return Column(
-      children: [
-        _buildJourneyTypeCard(
-          icon: Icons.directions_bus,
-          title: l10n.translate('intercity'),
-          description:
-              l10n.translate('intercity_desc'),
-          onTap: () => _selectJourneyType('intercity'),
+        const SizedBox(height: AppSpacing.xl),
+        _buildLabel('ORIGIN'),
+        const SizedBox(height: AppSpacing.xs),
+        _buildLocationSelector(
+          label: 'origin city',
+          icon: Icons.location_on_outlined,
+          value: _origin,
+          onTap: _openOriginPicker,
         ),
-        const SizedBox(height: AppSpacing.md),
-        _buildJourneyTypeCard(
-          icon: Icons.public,
-          title: l10n.translate('east_africa'),
-          description:
-              l10n.translate('east_africa_desc'),
-          onTap: () => _selectJourneyType('east_africa'),
+        const SizedBox(height: AppSpacing.lg),
+        _buildLabel('DESTINATION'),
+        const SizedBox(height: AppSpacing.xs),
+        _buildLocationSelector(
+          label: 'destination city',
+          icon: Icons.location_on_outlined,
+          value: _destination,
+          onTap: _openDestinationPicker,
         ),
       ],
     );
-  }
-
-  Widget _buildJourneyTypeCard({
-    required IconData icon,
-    required String title,
-    required String description,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(AppSpacing.lg),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [AppColors.primary, AppColors.primaryDark],
-          ),
-          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-          border: Border.all(color: AppColors.primary, width: 2),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: AppColors.white.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-              ),
-              child: Icon(icon, size: 22, color: AppColors.white),
-            ),
-            const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: AppTypography.titleMedium.copyWith(
-                      color: AppColors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    description,
-                    style: AppTypography.bodySmall.copyWith(
-                      color: AppColors.white.withValues(alpha: 0.85),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _selectJourneyType(String type) {
-    ref.read(soundServiceProvider).vibrate();
-    setState(() {
-      _journeyType = type;
-      _origin = 'Kigali';
-      _destination = null;
-    });
-    // Automatically open the destination picker now that the journey type is chosen.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _openDestinationPicker();
-    });
   }
 
   void _openDestinationPicker() {
@@ -1382,6 +1203,20 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       onSelected: (v) {
         setState(() => _destination = v);
         _scheduleAutoAdvance();
+      },
+    );
+  }
+
+  void _openOriginPicker() {
+    final l10n = AppLocalizations.of(context);
+    _showLocationPicker(
+      title: l10n.translate('select_origin'),
+      currentValue: _origin,
+      exclude: _destination,
+      options: _scopedDestinations,
+      showSearch: true,
+      onSelected: (v) {
+        setState(() => _origin = v);
       },
     );
   }
@@ -1427,76 +1262,134 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     String? exclude,
     String? currentValue,
     List<String>? options,
+    bool showSearch = false,
   }) async {
     final base = options ?? cityOptions;
-    final filtered = exclude != null
+    final baseFiltered = exclude != null
         ? base.where((c) => c != exclude).toList()
         : List<String>.from(base);
 
     final result = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: AppColors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppSpacing.radiusMd)),
       ),
       builder: (ctx) {
-        return DraggableScrollableSheet(
-          initialChildSize: 0.65,
-          minChildSize: 0.4,
-          maxChildSize: 0.85,
-          expand: false,
-          builder: (ctx, scrollController) {
-            return Column(
-              children: [
-                const SizedBox(height: 12),
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: AppColors.border,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-                  child: Text(
-                    title,
-                    style: AppTypography.headlineMedium,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Divider(height: 1),
-                Expanded(
-                  child: ListView.separated(
-                    controller: scrollController,
-                    padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                    itemCount: filtered.length,
-                    separatorBuilder: (_, _2) => const Divider(height: 1, indent: 16, endIndent: 16),
-                    itemBuilder: (ctx, index) {
-                      final city = filtered[index];
-                      final isSelected = city == currentValue;
-                      return ListTile(
-                        dense: true,
-                        selected: isSelected,
-                        selectedTileColor: AppColors.primaryLight,
-                        leading: Icon(
-                          isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                          color: isSelected ? AppColors.primary : AppColors.textMuted,
-                          size: 20,
-                        ),
-                        title: Text(
-                          city,
-                          style: AppTypography.bodyLarge.copyWith(
-                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+        var query = '';
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final q = query.trim().toLowerCase();
+            final filtered = q.isEmpty
+                ? baseFiltered
+                : baseFiltered
+                    .where((c) => c.toLowerCase().contains(q))
+                    .toList();
+            return DraggableScrollableSheet(
+              initialChildSize: 0.5,
+              minChildSize: 0.35,
+              maxChildSize: 0.7,
+              expand: false,
+              builder: (ctx, scrollController) {
+                return Column(
+                  children: [
+                    const SizedBox(height: 12),
+                    Container(
+                      width: 40,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: AppColors.border,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                      child: Text(
+                        title,
+                        style: AppTypography.titleLarge,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    if (showSearch) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                        child: TextField(
+                          onChanged: (v) => setSheetState(() => query = v),
+                          textInputAction: TextInputAction.search,
+                          style: AppTypography.bodyMedium,
+                          decoration: InputDecoration(
+                            hintText: AppLocalizations.of(ctx).translate('search_location'),
+                            hintStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
+                            prefixIcon: const Icon(Icons.search, size: 20, color: AppColors.primary),
+                            isDense: true,
+                            filled: true,
+                            fillColor: AppColors.white,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: AppSpacing.md,
+                              vertical: 10,
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                              borderSide: const BorderSide(color: AppColors.primary),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                              borderSide: const BorderSide(color: AppColors.primary),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                              borderSide: const BorderSide(color: AppColors.primary, width: 2),
+                            ),
                           ),
                         ),
-                        onTap: () => Navigator.pop(ctx, city),
-                      );
-                    },
-                  ),
-                ),
-              ],
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: filtered.isEmpty
+                          ? Center(
+                              child: Text(
+                                'No locations found',
+                                style: AppTypography.bodyMedium.copyWith(
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
+                            )
+                          : ListView.separated(
+                              controller: scrollController,
+                              padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
+                              itemCount: filtered.length,
+                              separatorBuilder: (_, _2) => const Divider(height: 1, indent: 16, endIndent: 16),
+                              itemBuilder: (ctx, index) {
+                                final city = filtered[index];
+                                final isSelected = city == currentValue;
+                                return ListTile(
+                                  dense: true,
+                                  selected: isSelected,
+                                  selectedTileColor: AppColors.primaryLight,
+                                  leading: Icon(
+                                    isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                                    color: isSelected ? AppColors.primary : AppColors.textMuted,
+                                    size: 20,
+                                  ),
+                                  title: Text(
+                                    city,
+                                    style: AppTypography.bodyLarge.copyWith(
+                                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                                    ),
+                                  ),
+                                  onTap: () => Navigator.pop(ctx, city),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                );
+              },
             );
           },
         );
@@ -1752,7 +1645,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               setState(() {
                 _selectedRoute = route;
                 _selectedPickupPoint = null;
-                _paymentMethod = null;
               });
               _fetchAgencyWorkingHours(route.agency.id);
               // If no stops to pick from, auto-advance
@@ -1763,155 +1655,147 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 _scheduleAutoAdvance();
               }
             },
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.all(AppSpacing.md),
-              decoration: BoxDecoration(
-                gradient: isSelected
-                    ? LinearGradient(
-                        colors: [AppColors.primary, AppColors.primaryDark],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      )
-                    : null,
-                color: isSelected ? null : AppColors.white,
-                borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                border: Border.all(
-                  color: isSelected ? AppColors.primary : AppColors.border,
-                  width: isSelected ? 2 : 1,
-                ),
-                boxShadow: isSelected
-                    ? [
-                        BoxShadow(
-                          color: AppColors.primary.withValues(alpha: 0.25),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ]
-                    : null,
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  decoration: BoxDecoration(
+                    gradient: isSelected
+                        ? LinearGradient(
+                            colors: [AppColors.primary, AppColors.primaryDark],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          )
+                        : null,
+                    color: isSelected ? null : AppColors.white,
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                    border: Border.all(color: AppColors.primary, width: 2),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? AppColors.white.withValues(alpha: 0.2)
-                              : AppColors.primaryLight,
-                          borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
-                        ),
-                        child: Center(
-                          child: Text(
-                            route.agency.name.isNotEmpty
-                                ? route.agency.name[0].toUpperCase()
-                                : '?',
-                            style: AppTypography.titleMedium.copyWith(
-                              color: isSelected ? AppColors.white : AppColors.primary,
+                      Row(
+                        children: [
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? AppColors.white.withValues(alpha: 0.2)
+                                  : AppColors.primaryLight,
+                              borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
                             ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.md),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              route.agency.name,
-                              style: AppTypography.titleSmall.copyWith(
-                                color: isSelected ? AppColors.white : AppColors.text,
+                            child: Center(
+                              child: Text(
+                                route.agency.name.isNotEmpty
+                                    ? route.agency.name[0].toUpperCase()
+                                    : '?',
+                                style: AppTypography.titleMedium.copyWith(
+                                  color: isSelected ? AppColors.white : AppColors.primary,
+                                ),
                               ),
                             ),
-                            const SizedBox(height: 2),
+                          ),
+                          const SizedBox(width: AppSpacing.md),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  route.agency.name,
+                                  style: AppTypography.titleSmall.copyWith(
+                                    color: isSelected ? AppColors.white : AppColors.text,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${route.origin} → ${route.destination}',
+                                  style: AppTypography.bodySmall.copyWith(
+                                    color: isSelected
+                                        ? AppColors.white.withValues(alpha: 0.8)
+                                        : AppColors.textSub,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Row(
+                        children: [
+                          Text(
+                            '$effectivePrice RWF',
+                            style: AppTypography.titleLarge.copyWith(
+                              color: isSelected ? AppColors.white : AppColors.primary,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          if (route.effectivePrice != null &&
+                              route.effectivePrice != route.price) ...[
+                            const SizedBox(width: AppSpacing.sm),
                             Text(
-                              '${route.origin} → ${route.destination}',
+                              '${route.price} RWF',
                               style: AppTypography.bodySmall.copyWith(
                                 color: isSelected
-                                    ? AppColors.white.withValues(alpha: 0.8)
-                                    : AppColors.textSub,
+                                    ? AppColors.white.withValues(alpha: 0.6)
+                                    : AppColors.textMuted,
+                                decoration: TextDecoration.lineThrough,
                               ),
                             ),
                           ],
-                        ),
+                          const Spacer(),
+                          if (isSelected && route.estimatedDuration != null)
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.access_time,
+                                  size: 14,
+                                  color: AppColors.white.withValues(alpha: 0.8),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  route.estimatedDuration!,
+                                  style: AppTypography.bodySmall.copyWith(
+                                    color: AppColors.white.withValues(alpha: 0.8),
+                                  ),
+                                ),
+                              ],
+                            ),
+                        ],
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Row(
-                    children: [
+                      const SizedBox(height: AppSpacing.xs),
                       Text(
-                        '$effectivePrice RWF',
-                        style: AppTypography.titleLarge.copyWith(
-                          color: isSelected ? AppColors.white : AppColors.primary,
-                          fontWeight: FontWeight.w700,
+                        '+$serviceFee RWF ${l10n.translate('service_fee_label')}',
+                        style: AppTypography.bodySmall.copyWith(
+                          color: isSelected
+                              ? AppColors.white.withValues(alpha: 0.85)
+                              : AppColors.textSub,
                         ),
                       ),
-                      if (route.effectivePrice != null &&
-                          route.effectivePrice != route.price) ...[
-                        const SizedBox(width: AppSpacing.sm),
-                        Text(
-                          '${route.price} RWF',
-                          style: AppTypography.bodySmall.copyWith(
-                            color: isSelected
-                                ? AppColors.white.withValues(alpha: 0.6)
-                                : AppColors.textMuted,
-                            decoration: TextDecoration.lineThrough,
-                          ),
-                        ),
-                      ],
-                      const Spacer(),
-                      if (isSelected && route.estimatedDuration != null)
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.access_time,
-                              size: 14,
-                              color: AppColors.white.withValues(alpha: 0.8),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              route.estimatedDuration!,
-                              style: AppTypography.bodySmall.copyWith(
-                                color: AppColors.white.withValues(alpha: 0.8),
-                              ),
-                            ),
-                          ],
-                        )
-                      else if (!isSelected)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: AppColors.surfaceVariant,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            l10n.translate('select_button'),
-                            style: AppTypography.bodySmall.copyWith(
-                              color: AppColors.textMuted,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.5,
-                            ),
-                          ),
-                        ),
                     ],
                   ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    '+$serviceFee RWF ${l10n.translate('service_fee_label')}',
-                    style: AppTypography.bodySmall.copyWith(
-                      color: isSelected
-                          ? AppColors.white.withValues(alpha: 0.85)
-                          : AppColors.textSub,
+                ),
+                Positioned(
+                  left: -3,
+                  top: 0,
+                  bottom: 0,
+                  child: Center(
+                    child: Container(
+                      width: 6,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(3),
+                      ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         );
@@ -2065,8 +1949,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               if (index < startWeekday) return const SizedBox.shrink();
               final day = index - startWeekday + 1;
               final date = DateTime(year, month, day);
-              // East African travel requires at least 2 days advance booking.
-              final advanceDays = _journeyType == 'east_africa' ? 2 : 0;
+              // East African cross-border travel requires at least 2 days advance
+              // booking (matches the web minDays = 2).
+              const advanceDays = 2;
               final minDate = DateTime(
                 today.year, today.month, today.day + advanceDays);
               final isUnavailable = date.isBefore(minDate);
@@ -2324,13 +2209,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final l10n = AppLocalizations.of(context);
     final effectivePrice = _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
     final fareTotal = effectivePrice * _seatCount;
-    final journeyType = _selectedRoute?.type;
-    final serviceFee = systemFeeFor(journeyType, effectivePrice, _seatCount).round();
+    final serviceFee = systemFeeFor(_selectedRoute?.type, effectivePrice, _seatCount).round();
     final totalAmount = fareTotal + serviceFee;
-    final onlineFee = pawapayFee(totalAmount, fareTotal);
+    final onlineFee = (fareTotal * _payoutRate).round() + _payoutFixed;
     final onlineTotal = totalAmount + onlineFee;
-    final isOnline = _paymentChannel == 'pawapay_online';
-    final displayTotal = isOnline ? onlineTotal : totalAmount;
 
     return Column(
       key: const ValueKey('step-payment'),
@@ -2373,7 +2255,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           child: Column(
             children: [
               Text(
-                '$displayTotal RWF',
+                '$onlineTotal RWF',
                 style: AppTypography.headlineLarge.copyWith(
                   color: AppColors.primary,
                   fontSize: 32,
@@ -2387,15 +2269,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 textAlign: TextAlign.center,
               ),
               const Divider(height: AppSpacing.xl),
-              _buildSummaryRow(l10n.translate('fare'), '$fareTotal RWF'),
+              _buildSummaryRow(l10n.translate('ticket_price'), '$fareTotal RWF'),
               const SizedBox(height: AppSpacing.xs),
-              _buildSummaryRow(l10n.translate('system_fee'), '+$serviceFee RWF'),
-              if (isOnline) ...[
-                const SizedBox(height: AppSpacing.xs),
-                _buildSummaryRow('Payment Fee', '+$onlineFee RWF'),
-              ],
+              _buildSummaryRow(l10n.translate('katisha_service_fee'), '+$serviceFee RWF'),
               const SizedBox(height: AppSpacing.xs),
-              _buildSummaryRow(l10n.translate('total'), '$displayTotal RWF', isBold: true),
+              _buildSummaryRow(l10n.translate('transaction_fee'), '+$onlineFee RWF'),
+              const SizedBox(height: AppSpacing.xs),
+              _buildSummaryRow(l10n.translate('total'), '$onlineTotal RWF', isBold: true),
             ],
           ),
         ),
@@ -2403,16 +2283,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
-  // Opens the Pay Online modal directly. The card channel (PawaPay online) is
-  // the only payment option, so no payment-method selection sheet is shown.
+  // Opens the Pay Online modal directly. Online payment via PawaPay is the
+  // only option — no payment-method selection sheet is shown ('mom' is the
+  // default provider matching the web PAYMENT_METHODS order).
   Future<void> _openOnlinePaymentModal() async {
     setState(() {
       _paymentChannel = 'pawapay_online';
-      if (_paymentMethod == null ||
-          !_paymentMethods.any((m) => m['id'] == _paymentMethod)) {
-        _paymentMethod =
-            _paymentMethods.isNotEmpty ? _paymentMethods.first['id'] as String : null;
-      }
+      _paymentMethod = 'mom';
     });
     // If the user is logged in, reuse their account name instead of asking
     // again in the payment modal. Fetch this in the background so it never
@@ -2475,15 +2352,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
-  // Pay Online modal (matches web PaymentModal): payment method + phone +
-  // guest name + green Pay button.
+  // Pay Online modal (matches web PaymentModal): pricing breakdown + phone +
+  // guest name + Pay button.
   Widget _buildOnlinePaymentModal() {
     final l10n = AppLocalizations.of(context);
     final effectivePrice = _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
     final fareTotal = effectivePrice * _seatCount;
     final serviceFee = systemFeeFor(_selectedRoute?.type, effectivePrice, _seatCount).round();
     final totalAmount = fareTotal + serviceFee;
-    final onlineFee = pawapayFee(totalAmount, fareTotal);
+    final onlineFee = (fareTotal * _payoutRate).round() + _payoutFixed;
     final onlineTotal = totalAmount + onlineFee;
 
     String nameError = '';
@@ -2521,11 +2398,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     ),
                     child: Column(
                       children: [
-                        _buildSummaryRow(l10n.translate('fare'), '$fareTotal RWF'),
+                        _buildSummaryRow(l10n.translate('ticket_price'), '$fareTotal RWF'),
                         const SizedBox(height: AppSpacing.xs),
-                        _buildSummaryRow(l10n.translate('system_fee'), '+$serviceFee RWF'),
+                        _buildSummaryRow(l10n.translate('katisha_service_fee'), '+$serviceFee RWF'),
                         const SizedBox(height: AppSpacing.xs),
-                        _buildSummaryRow('Payment Fee', '+$onlineFee RWF'),
+                        _buildSummaryRow(l10n.translate('transaction_fee'), '+$onlineFee RWF'),
                         const Divider(height: AppSpacing.md),
                         _buildSummaryRow(l10n.translate('total'), '$onlineTotal RWF', isBold: true),
                       ],
@@ -2637,7 +2514,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                               }
                             },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: _payGreen,
+                        backgroundColor: AppColors.primary,
                         foregroundColor: AppColors.white,
                         disabledBackgroundColor: AppColors.textMuted,
                         padding: const EdgeInsets.symmetric(vertical: 16),
@@ -2688,7 +2565,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 label: Text(
                   l10n.translate('back'),
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 14,
                     fontWeight: FontWeight.w600,
                     color: AppColors.text,
                   ),
@@ -2716,7 +2593,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                         }
                       : _goNext,
               style: ElevatedButton.styleFrom(
-                backgroundColor: _currentStep == 4 ? _payGreen : AppColors.primary,
+                backgroundColor: AppColors.primary,
                 foregroundColor: AppColors.white,
                 disabledBackgroundColor: AppColors.textMuted,
                 padding: const EdgeInsets.symmetric(vertical: 12),
@@ -2739,7 +2616,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       children: [
                         Text(
                           _currentStep == 4 ? l10n.translate('pay_now') : l10n.translate('continue_btn'),
-                          style: AppTypography.buttonSmall,
+                          style: AppTypography.buttonMedium,
                         ),
                         const SizedBox(width: AppSpacing.xs),
                         const Icon(Icons.arrow_forward, size: 16, color: AppColors.white),
@@ -3182,26 +3059,26 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                               height: 14,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: _waitGreenInk,
+                                color: AppColors.white,
                               ),
                             )
                           : const Icon(Icons.close, size: 16),
                       label: Text(
                         _cancellingWaiting ? l10n.translate('payment_cancelling') : l10n.translate('payment_cancel'),
                         style: const TextStyle(
-                          fontSize: 14,
+                          fontSize: 15,
                           fontWeight: FontWeight.w600,
-                          color: _waitGreenInk,
+                          color: AppColors.white,
                         ),
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: _waitGreenCta,
-                        foregroundColor: _waitGreenInk,
-                        disabledBackgroundColor: _waitGreenCta,
-                        disabledForegroundColor: _waitGreenInk,
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: AppColors.white,
+                        disabledBackgroundColor: AppColors.primary,
+                        disabledForegroundColor: AppColors.white,
                         elevation: 0,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                         ),
                       ),
                     ),
@@ -3246,9 +3123,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     }
     return buffer.toString();
   }
-
-  static const Color _waitGreenCta = Color(0xFF74E24C);
-  static const Color _waitGreenInk = Color(0xFF0B3D0B);
 
   // ── HELPERS ──
 

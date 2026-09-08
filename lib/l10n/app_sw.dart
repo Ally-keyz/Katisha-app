@@ -256,6 +256,9 @@ class AppSw {
     'contact_us': 'Tupigie kwenye 0782005076',
 
     // ── Booking Payment ─────────────────────────────
+    'ticket_price': 'Bei ya Tiketi',
+    'katisha_service_fee': 'Ada ya Huduma ya Katisha',
+    'transaction_fee': 'Ada ya Muamala',
     'fare': 'Bei',
     'payment_fee': 'Ada ya Malipo',
     'total': 'Jumla',

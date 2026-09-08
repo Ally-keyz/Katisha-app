@@ -256,6 +256,9 @@ class AppFr {
     'contact_us': 'Contactez-nous au 0782005076',
 
     // ── Booking Payment ─────────────────────────────
+    'ticket_price': 'Prix du billet',
+    'katisha_service_fee': 'Frais de service Katisha',
+    'transaction_fee': 'Frais de transaction',
     'fare': 'Tarif',
     'payment_fee': 'Frais de paiement',
     'total': 'Total',

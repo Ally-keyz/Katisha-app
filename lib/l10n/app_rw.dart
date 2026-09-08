@@ -258,6 +258,9 @@ class AppRw {
     'contact_us': 'duhamagare kuri 0782005076',
 
     // ── Booking Payment ─────────────────────────────
+    'ticket_price': 'Igiciro cy\'Ikipepala',
+    'katisha_service_fee': 'Igiciro cy\'Imirimo ya Katisha',
+    'transaction_fee': 'Ishoro ry\'Ibikorwa',
     'fare': 'Igiciro',
     'payment_fee': 'Ishoro ry\'Ubwishyu',
     'total': 'Yose',

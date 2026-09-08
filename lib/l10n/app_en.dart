@@ -247,6 +247,9 @@ class AppEn {
     'no_routes': 'No routes found for this selection',
 
     // ── Booking Payment ─────────────────────────────
+    'ticket_price': 'Ticket Price',
+    'katisha_service_fee': 'Katisha Service Fee',
+    'transaction_fee': 'Transaction Fee',
     'fare': 'Fare',
     'payment_fee': 'Payment Fee',
     'total': 'Total',
