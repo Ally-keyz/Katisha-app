@@ -1811,7 +1811,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       Row(
                         children: [
                           Text(
-                            '$total RWF',
+                            '${_formatAmount(total)} RWF',
                             style: AppTypography.titleLarge.copyWith(
                               color: isSelected ? AppColors.white : AppColors.primary,
                               fontWeight: FontWeight.w700,
@@ -1821,7 +1821,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                               route.effectivePrice != route.price) ...[
                             const SizedBox(width: AppSpacing.sm),
                             Text(
-                              '$oldTotal RWF',
+                              '${_formatAmount(oldTotal)} RWF',
                               style: AppTypography.bodySmall.copyWith(
                                 color: isSelected
                                     ? AppColors.white.withValues(alpha: 0.6)
@@ -2350,7 +2350,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           child: Column(
             children: [
               Text(
-                '$onlineTotal RWF',
+                '${_formatAmount(onlineTotal)} RWF',
                 style: AppTypography.headlineLarge.copyWith(
                   color: AppColors.primary,
                   fontSize: 32,
@@ -2364,7 +2364,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 textAlign: TextAlign.center,
               ),
               const Divider(height: AppSpacing.xl),
-              _buildSummaryRow(l10n.translate('total'), '$onlineTotal RWF', isBold: true),
+              _buildSummaryRow(l10n.translate('total'), '${_formatAmount(onlineTotal)} RWF', isBold: true),
             ],
           ),
         ),
@@ -2487,7 +2487,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     ),
                     child: Column(
                       children: [
-                        _buildSummaryRow(l10n.translate('total'), '$onlineTotal RWF', isBold: true),
+                        _buildSummaryRow(l10n.translate('total'), '${_formatAmount(onlineTotal)} RWF', isBold: true),
                       ],
                     ),
                   ),
@@ -2611,7 +2611,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                               child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.white),
                             )
                           : Text(
-                              'Pay ${onlineTotal} RWF',
+                              'Pay ${_formatAmount(onlineTotal)} RWF',
                               style: AppTypography.titleMedium.copyWith(
                                 color: AppColors.white,
                                 fontWeight: FontWeight.w700,
