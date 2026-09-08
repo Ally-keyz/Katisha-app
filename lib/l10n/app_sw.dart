@@ -187,6 +187,7 @@ class AppSw {
     'select_destination_picker': 'Chagua mji wa kwenye',
     'dest_diff_origin': 'Mahali pa kwenda lazima yawe tofauti na mahali pa kuanzia',
     'travel_date': 'Tarehe ya Safari',
+    'edit_date': 'Badilisha tarehe',
     'departure_time': 'Muda wa Kuondoka',
     'num_seats': 'Idadi ya viti',
     'select_seats': 'Chagua Viti',

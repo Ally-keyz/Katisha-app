@@ -187,6 +187,7 @@ class AppFr {
     'select_destination_picker': 'Sélectionnez la ville de destination',
     'dest_diff_origin': 'La destination doit être différente de l’origine',
     'travel_date': 'Date de voyage',
+    'edit_date': 'Modifier la date',
     'departure_time': 'Heure de départ',
     'num_seats': 'Nombre de places',
     'select_seats': 'Sélectionnez les places',

@@ -192,6 +192,7 @@ class AppRw {
     'title_route': 'Ujya he?',
     'title_agency': 'Hitamo agency ushaka',
     'title_schedule': 'Urashaka kugenda ryari?',
+    'edit_date': 'Hindura itariki',
     'title_passengers': 'Hitamo umubare wimyanya',
     'title_payment': 'Kwishyura',
     'desc_route': 'Hitamo aho uva n\'aho ujya',

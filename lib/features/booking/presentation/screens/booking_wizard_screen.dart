@@ -1897,30 +1897,32 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
         ),
         const SizedBox(height: AppSpacing.xl),
-        _buildLabel(l10n.translate('travel_date')),
-        const SizedBox(height: AppSpacing.sm),
-        if (_showCalendar)
-          _buildCalendar()
-        else
-          Padding(
-            padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+        if (_showCalendar) ...[
+          _buildLabel(l10n.translate('travel_date')),
+          const SizedBox(height: AppSpacing.sm),
+          _buildCalendar(),
+        ] else ...[
+          Align(
+            alignment: Alignment.centerRight,
             child: GestureDetector(
               onTap: () => setState(() => _showCalendar = true),
               child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
+                  Icon(Icons.edit, size: 16, color: AppColors.primary),
+                  const SizedBox(width: AppSpacing.xs),
                   Text(
-                    '${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}',
-                    style: AppTypography.bodyMedium.copyWith(
+                    l10n.translate('edit_date'),
+                    style: AppTypography.bodySmall.copyWith(
                       color: AppColors.primary,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(width: AppSpacing.xs),
-                  Icon(Icons.edit, size: 14, color: AppColors.primary),
                 ],
               ),
             ),
           ),
+        ],
         const SizedBox(height: AppSpacing.xl),
         Column(
           key: _departureTimeKey,
@@ -1928,7 +1930,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           children: [
             _buildLabel(
               l10n.translate('departure_time'),
-              style: AppTypography.titleLarge.copyWith(
+              style: AppTypography.headlineLarge.copyWith(
                 color: AppColors.text,
                 fontWeight: FontWeight.w800,
               ),
