@@ -373,6 +373,18 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         ..reset()
         ..forward();
       _scrollToTop();
+      // Auto-open the schedule pickers when the schedule step is reached,
+      // mirroring how the destination picker auto-opens.
+      if (_currentStep == 2) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          if (!_datePicked) {
+            _openDatePickerModal();
+          } else {
+            _openTimePickerModal();
+          }
+        });
+      }
     } else {
       _submitBooking();
     }
@@ -1949,12 +1961,17 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       l10n.translate('travel_date'),
                       style: AppTypography.titleLarge.copyWith(
                         color: AppColors.text,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: AppSpacing.sm),
                     _buildCalendar(
-                      onDatePicked: () => Navigator.pop(ctx),
+                      onDatePicked: () {
+                        Navigator.pop(ctx);
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (mounted) _openTimePickerModal();
+                        });
+                      },
                     ),
                   ],
                 ),
@@ -1996,7 +2013,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       l10n.translate('departure_time'),
                       style: AppTypography.titleLarge.copyWith(
                         color: AppColors.text,
-                        fontWeight: FontWeight.w800,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: AppSpacing.sm),
