@@ -184,7 +184,7 @@ class AppEn {
     'select_destination_picker': 'Select destination city',
     'dest_diff_origin': 'Destination must differ from origin',
     'travel_date': 'Travel Date',
-    'departure_time': 'Departure Time',
+    'departure_time': 'At what hour do you want to travel?',
     'num_seats': 'Number of seats',
     'select_seats': 'Select Seats',
     'seats_selected': 'selected',

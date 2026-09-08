@@ -203,7 +203,7 @@ class AppRw {
     // ── Booking Fields ───────────────────────────
     'search_location': 'Shakisha aho...',
     'dest_diff_origin': 'Aho ujya bigomba gutandukana n\'aho uva',
-    'departure_time': 'Isaha yo guhaguruka',
+    'departure_time': 'Mwifuza guhaguruka saa ngahe?',
     'num_seats': 'Umubare w\'imyanya',
     'seats_selected': 'byahiswemo',
     'seat': 'Icyanya',
