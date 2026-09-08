@@ -1731,8 +1731,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         final isSelected = _selectedRoute?.id == route.id;
         final effectivePrice = route.effectivePrice ?? route.price;
         final serviceFee = systemFeeFor(route.type, effectivePrice, 1).round();
-        final total = effectivePrice + serviceFee;
-        final oldTotal = route.price + systemFeeFor(route.type, route.price, 1).round();
+        final onlineFee = (effectivePrice * _payoutRate).round() + _payoutFixed;
+        final total = effectivePrice + serviceFee + onlineFee;
+        final oldServiceFee = systemFeeFor(route.type, route.price, 1).round();
+        final oldOnlineFee = (route.price * _payoutRate).round() + _payoutFixed;
+        final oldTotal = route.price + oldServiceFee + oldOnlineFee;
 
         return Padding(
           padding: const EdgeInsets.only(bottom: AppSpacing.md),
