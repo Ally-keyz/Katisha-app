@@ -2084,21 +2084,41 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
+  List<String> _allHalfHourSlots() {
+    final slots = <String>[];
+    for (var h = 0; h < 24; h++) {
+      for (var m = 0; m < 60; m += 30) {
+        slots.add('${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}');
+      }
+    }
+    return slots;
+  }
+
   Widget _buildTimeSlots() {
     final l10n = AppLocalizations.of(context);
+    // Show only the selected route's real departure times (matching the web:
+    // departureTimes when configured, otherwise the 30-minute slot grid).
+    final routeTimes = (_selectedRoute?.departureTimes ?? const <String>[])
+        .map((t) => t.trim())
+        .where((t) => t.isNotEmpty)
+        .toList();
+    final List<String> baseSlots;
+    if (routeTimes.isNotEmpty) {
+      baseSlots = routeTimes.toSet().toList()..sort();
+    } else {
+      baseSlots = _allHalfHourSlots();
+    }
     final morning = <String>[];
     final afternoon = <String>[];
     final night = <String>[];
-    for (var h = 0; h < 24; h++) {
-      for (var m = 0; m < 60; m += 30) {
-        final slot = '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
-        if (h < 12) {
-          morning.add(slot);
-        } else if (h < 18) {
-          afternoon.add(slot);
-        } else {
-          night.add(slot);
-        }
+    for (final slot in baseSlots) {
+      final h = int.parse(slot.split(':')[0]);
+      if (h < 12) {
+        morning.add(slot);
+      } else if (h < 18) {
+        afternoon.add(slot);
+      } else {
+        night.add(slot);
       }
     }
 

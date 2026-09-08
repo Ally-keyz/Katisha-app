@@ -60,6 +60,7 @@ class RouteModel {
   final List<String> provinces;
   final List<String> countries;
   final String? estimatedDuration;
+  final List<String> departureTimes;
   final String status;
 
   const RouteModel({
@@ -74,6 +75,7 @@ class RouteModel {
     this.provinces = const [],
     this.countries = const [],
     this.estimatedDuration,
+    this.departureTimes = const [],
     required this.status,
   });
 
@@ -102,6 +104,10 @@ class RouteModel {
               .toList() ??
           [],
       estimatedDuration: json['estimatedDuration'] as String?,
+      departureTimes: (json['departureTimes'] as List<dynamic>?)
+              ?.map((t) => t as String)
+              .toList() ??
+          [],
       status: json['status'] as String? ?? 'active',
     );
   }
@@ -118,6 +124,7 @@ class RouteModel {
         'provinces': provinces,
         'countries': countries,
         'estimatedDuration': estimatedDuration,
+        'departureTimes': departureTimes,
         'status': status,
       };
 }
