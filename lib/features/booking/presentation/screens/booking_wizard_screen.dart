@@ -2152,7 +2152,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               crossAxisCount: 3,
               crossAxisSpacing: AppSpacing.sm,
               mainAxisSpacing: AppSpacing.sm,
-              childAspectRatio: 2.5,
+              childAspectRatio: 1.8,
             ),
             itemCount: availableSlots.length,
             itemBuilder: (context, index) {
@@ -2175,9 +2175,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   ),
                   child: Text(
                     slot,
-                    style: AppTypography.bodyMedium.copyWith(
+                    style: AppTypography.titleMedium.copyWith(
                       color: isSelected ? AppColors.white : AppColors.text,
-                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w400,
+                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
                     ),
                   ),
                 ),
