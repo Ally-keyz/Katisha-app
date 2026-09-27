@@ -389,7 +389,7 @@ class _PaymentWaitingScreenState extends ConsumerState<PaymentWaitingScreen> {
                       const SizedBox(height: AppSpacing.lg),
                     ],
 
-                    // ── Cancel button (green CTA, like web) ──
+                    // ── Cancel button (blue CTA) ──
                     SizedBox(
                       width: double.infinity,
                       height: 40,
@@ -401,7 +401,7 @@ class _PaymentWaitingScreenState extends ConsumerState<PaymentWaitingScreen> {
                                 height: 14,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: _greenInk,
+                                  color: AppColors.white,
                                 ),
                               )
                             : const Icon(Icons.close, size: 16),
@@ -410,17 +410,19 @@ class _PaymentWaitingScreenState extends ConsumerState<PaymentWaitingScreen> {
                               ? l10n.translate('payment_cancelling')
                               : l10n.translate('payment_cancel'),
                           style: AppTypography.buttonMedium.copyWith(
+                            fontSize: 15,
                             fontWeight: FontWeight.w600,
+                            color: AppColors.white,
                           ),
                         ),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: _greenCta,
-                          foregroundColor: _greenInk,
-                          disabledBackgroundColor: _greenCta,
-                          disabledForegroundColor: _greenInk,
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: AppColors.white,
+                          disabledBackgroundColor: AppColors.primary,
+                          disabledForegroundColor: AppColors.white,
                           elevation: 0,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                           ),
                         ),
                       ),
@@ -444,7 +446,4 @@ class _PaymentWaitingScreenState extends ConsumerState<PaymentWaitingScreen> {
     }
     return buffer.toString();
   }
-
-  static const Color _greenCta = Color(0xFF74E24C);
-  static const Color _greenInk = Color(0xFF0B3D0B);
 }
