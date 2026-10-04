@@ -10,6 +10,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../../../core/error/failures.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/platform/badge_counts.dart';
+import '../../../../core/platform/local_ticket_store.dart';
 import '../../../../core/platform/platform_providers.dart';
 import '../../../../core/platform/screen_security.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -21,6 +22,10 @@ import '../../data/my_bookings_repository.dart';
 final _myBookingsRepoProvider = Provider<MyBookingsRepository>((ref) {
   return MyBookingsRepository(ref.read(apiClientProvider));
 });
+
+/// How close to the end of the list the user must scroll before the next page
+/// is requested.
+const double _loadMoreThreshold = 400;
 
 /// User's bookings screen - shows only non-expired, active bookings.
 class MyBookingsScreen extends ConsumerStatefulWidget {
@@ -60,7 +65,25 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
     return b.status == 'issued';
   }
 
+  /// Requests the next page once the user is within [_loadMoreThreshold] pixels
+  /// of the end of the list. [_fetchBookings] guards against overlapping
+  /// requests, so scroll spam can't stack pages.
+  bool _onScroll(ScrollNotification notification) {
+    if (notification.metrics.axis != Axis.vertical) return false;
+    if (!_hasMore || _loading || _error != null) return false;
+    if (notification.metrics.pixels <
+        notification.metrics.maxScrollExtent - _loadMoreThreshold) {
+      return false;
+    }
+    _page++;
+    unawaited(_fetchBookings());
+    return false;
+  }
+
   Future<void> _fetchBookings({bool refresh = false}) async {
+    // Never stack requests: without this the scroll listener could re-enter
+    // this method while a slow page is still in flight.
+    if (_loading && !refresh) return;
     if (refresh) {
       setState(() {
         _page = 1;
@@ -68,8 +91,9 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
         _bookings = [];
         _loading = true;
       });
+    } else {
+      setState(() => _loading = true);
     }
-    setState(() => _loading = true);
     final result = await _repo.getMyBookings(_page, 50);
     if (!mounted) return;
     result.fold(
@@ -118,13 +142,23 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
 
         // Persist and pre-download tickets in the background so the list
         // renders immediately instead of blocking on disk writes / downloads.
+        //
+        // Resolve every provider before the unawaited block: it spans several
+        // awaits, and reading `ref` from it after the screen is disposed trips
+        // Riverpod's "Cannot use `ref` after the widget was disposed" assert.
+        final localStore = ref.read(localTicketStoreProvider);
+        final api = ref.read(apiClientProvider);
+        final badges = ref.read(badgeCountsProvider.notifier);
+        final bookingJson = {
+          for (final booking in response.bookings)
+            booking.id: _bookingToJson(booking),
+        };
         unawaited(() async {
-          final localStore = ref.read(localTicketStoreProvider);
-          for (final booking in response.bookings) {
-            await localStore.cacheBooking(booking.id, _bookingToJson(booking));
+          for (final entry in bookingJson.entries) {
+            await localStore.cacheBooking(entry.key, entry.value);
           }
-          _preCacheTicketImages(response.bookings);
-          ref.read(badgeCountsProvider.notifier).refresh();
+          await _preCacheTicketImages(api, localStore, response.bookings);
+          badges.refresh();
         }());
       },
     );
@@ -132,9 +166,11 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
 
   /// Downloads any ticket images not yet stored locally, so they are available
   /// offline and never exposed in the gallery or public file manager.
-  Future<void> _preCacheTicketImages(List<Booking> bookings) async {
-    final store = ref.read(localTicketStoreProvider);
-    final api = ref.read(apiClientProvider);
+  Future<void> _preCacheTicketImages(
+    ApiClient api,
+    LocalTicketStore store,
+    List<Booking> bookings,
+  ) async {
     for (final booking in bookings) {
       final imageUrl = booking.ticketImage;
       if (imageUrl == null || imageUrl.isEmpty) continue;
@@ -304,30 +340,37 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
                   onRefresh: () => _fetchBookings(refresh: true),
                   color: AppColors.primary,
                   strokeWidth: 2,
-                  child: ListView.builder(
-                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                    itemCount: _bookings.length + (_hasMore ? 1 : 0),
-                    itemBuilder: (context, index) {
-                      if (index == _bookings.length) {
-                        _page++;
-                        _fetchBookings();
-                        return const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 20),
-                          child: Center(
-                            child: SizedBox(
-                              width: 24,
-                              height: 24,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                  child: NotificationListener<ScrollNotification>(
+                    onNotification: _onScroll,
+                    child: ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                      itemCount:
+                          _bookings.length + (_hasMore && !_loading ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (index == _bookings.length) {
+                          // The fetch is triggered from [_onScroll], never from
+                          // here: `_fetchBookings` calls `setState` synchronously
+                          // and incrementing `_page` mutates state, both of
+                          // which are illegal during the build phase.
+                          return const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 20),
+                            child: Center(
+                              child: SizedBox(
+                                width: 24,
+                                height: 24,
+                                child:
+                                    CircularProgressIndicator(strokeWidth: 2),
+                              ),
                             ),
-                          ),
+                          );
+                        }
+                        final booking = _bookings[index];
+                        return _BookingCard(
+                          booking: booking,
+                          onTap: () => context.push('/ticket/${booking.id}'),
                         );
-                      }
-                      return _BookingCard(
-                        booking: _bookings[index],
-                        onTap: () =>
-                            context.push('/ticket/${_bookings[index].id}'),
-                      );
-                    },
+                      },
+                    ),
                   ),
                 ),
         ),
@@ -443,6 +486,11 @@ String _statusLabel(String status) {
 
 // --- Booking Card -------------------------------------------------------------
 
+/// Shared across all cards: `DateFormat` parses its pattern and resolves locale
+/// symbols on construction, so building one per card per frame was a
+/// measurable cost in a scrolling list.
+final _cardDateFormat = DateFormat('EEE, d MMM yyyy');
+
 class _BookingCard extends StatelessWidget {
   final Booking booking;
   final VoidCallback? onTap;
@@ -459,16 +507,20 @@ class _BookingCard extends StatelessWidget {
           return _TicketModal(booking: booking);
         },
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          final curved = CurvedAnimation(
-            parent: animation,
-            curve: Curves.easeOutCubic,
-          );
-          return FadeTransition(
-            opacity: curved,
-            child: ScaleTransition(
-              scale: Tween<double>(begin: 0.95, end: 1.0).animate(curved),
-              child: child,
-            ),
+          // Curve the raw value instead of wrapping in a `CurvedAnimation`:
+          // a CurvedAnimation registers a status listener on its parent and is
+          // never disposed when the route is popped, leaking a listener per
+          // ticket preview opened.
+          return AnimatedBuilder(
+            animation: animation,
+            child: child,
+            builder: (context, child) {
+              final t = Curves.easeOutCubic.transform(animation.value);
+              return Opacity(
+                opacity: t,
+                child: Transform.scale(scale: 0.95 + 0.05 * t, child: child),
+              );
+            },
           );
         },
       ),
@@ -478,9 +530,8 @@ class _BookingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
-    final dateFormat = DateFormat('EEE, d MMM yyyy');
     final dateStr = booking.travelDate != null
-        ? dateFormat.format(booking.travelDate!)
+        ? _cardDateFormat.format(booking.travelDate!)
         : '—';
     final isIssued = booking.status == 'issued';
     final status = booking.status;

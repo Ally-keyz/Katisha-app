@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lottie/lottie.dart';
 import '../theme/app_colors.dart';
@@ -38,6 +39,15 @@ class KatishaAppBar extends StatelessWidget implements PreferredSizeWidget {
     return AppBar(
       backgroundColor: AppColors.white,
       foregroundColor: AppColors.text,
+      // White toolbar, so pin dark status/navigation bar icons regardless of
+      // which route (e.g. the dark welcome page) was on screen before.
+      systemOverlayStyle: const SystemUiOverlayStyle(
+        statusBarColor: AppColors.white,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+        systemNavigationBarColor: AppColors.white,
+        systemNavigationBarIconBrightness: Brightness.dark,
+      ),
       elevation: 0,
       centerTitle: false,
       automaticallyImplyLeading: showBackButton,

@@ -26,6 +26,12 @@ class SocketServiceImpl implements SocketService {
     );
     final serverUrl = baseUrl.replaceAll('/api', '');
 
+    // A previous socket can exist while `_connected` is false (dropped link,
+    // reconnect attempts exhausted). Creating another one over it would leave
+    // the old engine, its reconnection timers and its `on(...)` handlers alive
+    // for the lifetime of the app, so tear the old one down first.
+    disconnect();
+
     _socket = io.io(
       serverUrl,
       io.OptionBuilder()

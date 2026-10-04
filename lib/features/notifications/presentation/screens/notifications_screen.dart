@@ -17,6 +17,10 @@ final _notificationsRepoProvider = Provider<NotificationsRepository>((ref) {
   return NotificationsRepository(ref.read(apiClientProvider));
 });
 
+/// How close to the end of the list the user must scroll before the next page
+/// is requested.
+const double _loadMoreThreshold = 400;
+
 class NotificationsScreen extends ConsumerStatefulWidget {
   const NotificationsScreen({super.key});
 
@@ -88,24 +92,29 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         }
       },
       (response) async {
-        final local = await ref
-            .read(localNotificationStoreProvider)
-            .getAll();
-        final remote = _page == 1
-            ? response.notifications
-            : [..._notifications.where((n) => n.id.startsWith('local_')), ...response.notifications];
-        if (!mounted) return;
-        setState(() {
-          if (_page == 1) {
-            _notifications = [...local, ...remote];
-          } else {
+        // The locally stored notifications are only ever merged into page 1.
+        // Reading the store decodes every persisted record, so doing it on each
+        // appended page parsed the whole cache and then discarded the result.
+        if (_page == 1) {
+          final local =
+              await ref.read(localNotificationStoreProvider).getAll();
+          if (!mounted) return;
+          setState(() {
+            _notifications = [...local, ...response.notifications];
+            _hasMore = _page < response.pages;
+            _loading = false;
+            _loadingMore = false;
+            _error = null;
+          });
+        } else {
+          setState(() {
             _notifications = [..._notifications, ...response.notifications];
-          }
-          _hasMore = _page < response.pages;
-          _loading = false;
-          _loadingMore = false;
-          _error = null;
-        });
+            _hasMore = _page < response.pages;
+            _loading = false;
+            _loadingMore = false;
+            _error = null;
+          });
+        }
       },
     );
   }
@@ -147,9 +156,25 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
 
   void _loadMore() {
     if (_loadingMore || !_hasMore || _loading) return;
-    _loadingMore = true;
-    _page++;
+    setState(() {
+      _loadingMore = true;
+      _page++;
+    });
     _fetchNotifications();
+  }
+
+  /// Requests the next page once the user is within [_loadMoreThreshold] pixels
+  /// of the end of the list. `_loadMore` guards against overlapping requests,
+  /// so scroll spam can't stack pages.
+  bool _onScroll(ScrollNotification notification) {
+    if (notification.metrics.axis != Axis.vertical) return false;
+    if (!_hasMore || _loading || _loadingMore || _error != null) return false;
+    if (notification.metrics.pixels <
+        notification.metrics.maxScrollExtent - _loadMoreThreshold) {
+      return false;
+    }
+    _loadMore();
+    return false;
   }
 
   // Removes a notification when the user swipes it left or right. Locally
@@ -171,6 +196,8 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    // Walk the list once per build instead of once per read site.
+    final unread = _unreadCount;
 
     return Scaffold(
       backgroundColor: AppColors.white,
@@ -179,7 +206,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         showLottie: false,
         showBell: false,
         extraActions: [
-          if (_unreadCount > 0)
+          if (unread > 0)
             TextButton(
               onPressed: _markingRead ? null : _markAllRead,
               child: _markingRead
@@ -199,11 +226,11 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
             ),
         ],
       ),
-      body: _buildBody(l10n),
+      body: _buildBody(l10n, unread),
     );
   }
 
-  Widget _buildBody(AppLocalizations l10n) {
+  Widget _buildBody(AppLocalizations l10n, int unread) {
     if (_loading && _notifications.isEmpty) {
       return _buildLoadingState();
     }
@@ -221,25 +248,31 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
 
     return Column(
       children: [
-        if (_unreadCount > 0)
-          _buildUnreadBanner(l10n),
+        if (unread > 0)
+          _buildUnreadBanner(l10n, unread),
         Expanded(
           child: RefreshIndicator(
             color: AppColors.primary,
             onRefresh: () => _fetchNotifications(refresh: true),
-            child: ListView.separated(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.md,
-                vertical: AppSpacing.sm,
-              ),
-              itemCount: itemCount,
-              separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.xs),
-              itemBuilder: (context, index) {
-                if (index == _notifications.length) {
-                  _loadMore();
-                  return _buildLoadMoreIndicator();
-                }
+            child: NotificationListener<ScrollNotification>(
+              onNotification: _onScroll,
+              child: ListView.separated(
+                physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md,
+                  vertical: AppSpacing.sm,
+                ),
+                itemCount: itemCount,
+                separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.xs),
+                itemBuilder: (context, index) {
+                  if (index == _notifications.length) {
+                    // `_loadMore` mutates state and triggers a fetch that calls
+                    // `setState`, so it is driven from [_onScroll] rather than
+                    // from here — calling it during build is illegal and, since
+                    // the sentinel stays in the tree, it also re-fired on every
+                    // rebuild.
+                    return _buildLoadMoreIndicator();
+                  }
                 final notification = _notifications[index];
                 return Dismissible(
                   key: ValueKey(notification.id),
@@ -266,6 +299,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                   child: _NotificationTile(notification: notification),
                 );
               },
+              ),
             ),
           ),
         ),
@@ -273,7 +307,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     );
   }
 
-  Widget _buildUnreadBanner(AppLocalizations l10n) {
+  Widget _buildUnreadBanner(AppLocalizations l10n, int unread) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(
@@ -295,7 +329,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
           ),
           const SizedBox(width: AppSpacing.sm),
           Text(
-            '${_unreadCount} ${_unreadCount == 1 ? l10n.translate('unread_notification') : l10n.translate('unread_notifications')}',
+            '${unread} ${unread == 1 ? l10n.translate('unread_notification') : l10n.translate('unread_notifications')}',
             style: AppTypography.labelLarge.copyWith(
               color: AppColors.primary,
             ),
@@ -608,9 +642,13 @@ class _NotificationTile extends StatelessWidget {
     if (diff.inMinutes < 60) return '${diff.inMinutes}m';
     if (diff.inHours < 24) return '${diff.inHours}h';
     if (diff.inDays < 7) return '${diff.inDays}d';
-    return DateFormat('dd MMM').format(dateTime);
+    return _tileDateFormat.format(dateTime);
   }
 }
+
+/// Shared by every tile: `DateFormat` parses its pattern and resolves locale
+/// symbols on construction, and this ran per tile per build.
+final _tileDateFormat = DateFormat('dd MMM');
 
 // ---------------------------------------------------------------------------
 // Shimmer placeholder for loading state

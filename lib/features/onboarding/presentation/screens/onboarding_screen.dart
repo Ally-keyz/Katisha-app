@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/platform/platform_providers.dart';
@@ -21,90 +22,102 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.white,
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, 0),
-              child: Row(
-                children: [
-                  Image.asset(
-                    'assets/images/logo.png',
-                    height: 40,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      Icons.directions_bus,
-                      size: 40,
-                      color: AppColors.primary,
+      // This page is white, so the status-bar clock/signal/battery must be dark.
+      // Stated explicitly because the welcome page leaves light icons behind and
+      // would otherwise bleed into this route.
+      body: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: const SystemUiOverlayStyle(
+          statusBarColor: AppColors.white,
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+          systemNavigationBarColor: AppColors.white,
+          systemNavigationBarIconBrightness: Brightness.dark,
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, 0),
+                child: Row(
+                  children: [
+                    Image.asset(
+                      'assets/images/logo.png',
+                      height: 40,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.directions_bus,
+                        size: 40,
+                        color: AppColors.primary,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            const Spacer(),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    width: 56,
-                    height: 56,
-                    decoration: const BoxDecoration(
-                      color: AppColors.primaryLight,
-                      shape: BoxShape.circle,
+              const Spacer(),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 56,
+                      height: 56,
+                      decoration: const BoxDecoration(
+                        color: AppColors.primaryLight,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.language,
+                        size: 28,
+                        color: AppColors.primary,
+                      ),
                     ),
-                    child: const Icon(
-                      Icons.language,
-                      size: 28,
-                      color: AppColors.primary,
+                    const SizedBox(height: AppSpacing.md),
+                    Text(
+                      l10n.translate('choose_language'),
+                      style: AppTypography.displaySmall.copyWith(color: AppColors.text),
+                      textAlign: TextAlign.center,
                     ),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  Text(
-                    l10n.translate('choose_language'),
-                    style: AppTypography.displaySmall.copyWith(color: AppColors.text),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    l10n.translate('select_preferred_language'),
-                    style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.xl),
-                  _buildLanguageOption(
-                    context,
-                    code: 'en',
-                    label: 'English',
-                    flag: '\u{1F1EC}\u{1F1E7}',
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  _buildLanguageOption(
-                    context,
-                    code: 'rw',
-                    label: 'Kinyarwanda',
-                    flag: '\u{1F1F7}\u{1F1FC}',
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  _buildLanguageOption(
-                    context,
-                    code: 'sw',
-                    label: 'Kiswahili',
-                    flag: '\u{1F1F9}\u{1F1FF}',
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  _buildLanguageOption(
-                    context,
-                    code: 'fr',
-                    label: 'Fran\u00e7ais',
-                    flag: '\u{1F1EB}\u{1F1F7}',
-                  ),
-                ],
+                    const SizedBox(height: AppSpacing.sm),
+                    Text(
+                      l10n.translate('select_preferred_language'),
+                      style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: AppSpacing.xl),
+                    _buildLanguageOption(
+                      context,
+                      code: 'en',
+                      label: 'English',
+                      flag: '\u{1F1EC}\u{1F1E7}',
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _buildLanguageOption(
+                      context,
+                      code: 'rw',
+                      label: 'Kinyarwanda',
+                      flag: '\u{1F1F7}\u{1F1FC}',
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _buildLanguageOption(
+                      context,
+                      code: 'sw',
+                      label: 'Kiswahili',
+                      flag: '\u{1F1F9}\u{1F1FF}',
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _buildLanguageOption(
+                      context,
+                      code: 'fr',
+                      label: 'Fran\u00e7ais',
+                      flag: '\u{1F1EB}\u{1F1F7}',
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const Spacer(),
-          ],
+              const Spacer(),
+            ],
+          ),
         ),
       ),
     );

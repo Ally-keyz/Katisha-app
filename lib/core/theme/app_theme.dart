@@ -4,9 +4,19 @@ import 'app_colors.dart';
 import 'app_typography.dart';
 import 'app_spacing.dart';
 
-/// Creates the Material 3 ThemeData for Katisha.
+/// Cached Material 3 ThemeData for Katisha.
 /// On iOS, Cupertino widgets will use these tokens via adaptive wrappers.
-ThemeData buildAppTheme() {
+///
+/// Built once and memoized: `ColorScheme.fromSeed` runs the full HCT
+/// colour-math pipeline, and the returned `ThemeData` is immutable for the
+/// app's lifetime (Katisha is light-theme only). Rebuilding it on every root
+/// `build()` re-ran that work and produced a new `ThemeData` identity each
+/// time, which invalidated every widget that compares themes.
+ThemeData buildAppTheme() => _cachedTheme ??= _buildTheme();
+
+ThemeData? _cachedTheme;
+
+ThemeData _buildTheme() {
   final colorScheme = ColorScheme.fromSeed(
     seedColor: AppColors.primary,
     primary: AppColors.primary,
@@ -28,13 +38,23 @@ ThemeData buildAppTheme() {
       foregroundColor: AppColors.text,
       elevation: 0,
       centerTitle: false,
-      systemOverlayStyle: SystemUiOverlayStyle.dark,
+      systemOverlayStyle: const SystemUiOverlayStyle(
+        statusBarColor: AppColors.white,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+        systemNavigationBarColor: AppColors.white,
+        systemNavigationBarIconBrightness: Brightness.dark,
+      ),
       titleTextStyle: AppTypography.titleLarge.copyWith(color: AppColors.text),
     ),
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: AppColors.white,
       indicatorColor: AppColors.primaryLight,
-      elevation: 2,
+      // Flat bar: the M3 default elevation draws a shadow over the content.
+      elevation: 0,
+      // Drop the tonal tint as well, otherwise the white bar picks up a blue
+      // wash from the seed colour.
+      surfaceTintColor: Colors.transparent,
       labelTextStyle: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.selected)) {
           return AppTypography.labelSmall.copyWith(
@@ -42,13 +62,17 @@ ThemeData buildAppTheme() {
             fontWeight: FontWeight.w600,
           );
         }
-        return AppTypography.labelSmall.copyWith(color: AppColors.textMuted);
+        // Unselected tabs stay plain black so the bar reads as one clean row.
+        return AppTypography.labelSmall.copyWith(
+          color: AppColors.text,
+          fontWeight: FontWeight.w500,
+        );
       }),
       iconTheme: WidgetStateProperty.resolveWith((states) {
         if (states.contains(WidgetState.selected)) {
           return const IconThemeData(color: AppColors.primary, size: 24);
         }
-        return const IconThemeData(color: AppColors.textMuted, size: 24);
+        return const IconThemeData(color: AppColors.text, size: 24);
       }),
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(

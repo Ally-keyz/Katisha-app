@@ -15,15 +15,25 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/widgets/city_autocomplete_field.dart' show cityOptions;
+import '../../../../core/widgets/katisha_modal.dart';
 import '../../data/booking_repository.dart';
 import '../../../../shared/models/route_model.dart';
 import '../../../../shared/models/booking_model.dart';
 import '../../../../shared/utils/service_fee.dart';
 import '../../../../l10n/app_localizations.dart';
 
+/// Step titles, cached per language code. The header is rebuilt on every
+/// wizard `setState`, and this used to run five map lookups plus a fresh list
+/// allocation each time just to read one element.
+String? _stepLabelsLocale;
+List<String>? _stepLabelsCache;
+
 List<String> _stepLabels(BuildContext context) {
   final l10n = AppLocalizations.of(context);
-  return [
+  final code = l10n.languageCode;
+  final cached = _stepLabelsCache;
+  if (cached != null && _stepLabelsLocale == code) return cached;
+  return _stepLabelsCache = [
     l10n.translate('step_route'),
     l10n.translate('step_agency'),
     l10n.translate('step_schedule'),
@@ -32,8 +42,33 @@ List<String> _stepLabels(BuildContext context) {
   ];
 }
 
+/// A row in the grouped city picker: either a country header (`header` set) or
+/// a selectable city (`city` set).
+class _GroupedRow {
+  const _GroupedRow.header(this.header) : city = null;
+  const _GroupedRow.city(this.city) : header = null;
+
+  final String? header;
+  final String? city;
+}
+
+/// Flattens the grouped picker into a header/city row list so it can be fed to
+/// a lazy `ListView.builder`. Building it eagerly with nested `for` loops in
+/// `ListView.children` laid out every group and every city up front.
+List<_GroupedRow> _flattenGroupedRows(
+    List<MapEntry<String, List<String>>> groups) {
+  final rows = <_GroupedRow>[];
+  for (final entry in groups) {
+    rows.add(_GroupedRow.header(entry.key));
+    for (final city in entry.value) {
+      rows.add(_GroupedRow.city(city));
+    }
+  }
+  return rows;
+}
+
 /// Duration for the snappy, smooth bottom-sheet enter/exit animation.
-const _sheetAnimDuration = Duration(milliseconds: 220);
+const _sheetAnimDuration = Duration(milliseconds: 160);
 
 /// PawaPay online payment fee — mirrors the web BookingWizard fallback:
 /// Transaction Fee = round(fare × payoutRate) + payoutFixed, with the server
@@ -95,6 +130,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   String? _selectedPickupPoint;
   List<Map<String, dynamic>> _agencyWorkingHours = [];
 
+  /// Notified when [_searchingRoutes] flips to false, so the auto-opened agency
+  /// sheet can wait for the route search instead of rendering empty.
+  final List<VoidCallback> _routeSearchListeners = [];
+
   // Auto-advance
   Timer? _autoAdvanceTimer;
 
@@ -139,10 +178,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   Timer? _paymentAbandonTimer;
   Timer? _postConfirmTimer;
   bool _paymentVerifyInFlight = false;
+  int _paymentPollIntervalMs = _minPaymentPollMs;
+
+  static const int _minPaymentPollMs = 1000;
+  static const int _maxPaymentPollMs = 4000;
 
   late AnimationController _progressAnimController;
   late AnimationController _confirmAnimController;
   late AnimationController _blinkController;
+  bool _blinkSyncScheduled = false;
   final _departureTimeKey = GlobalKey();
   StreamSubscription? _paymentSub;
 
@@ -281,21 +325,60 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     }
   }
 
+  /// Today's availability windows as `(startMinute, endMinute)` pairs, or null
+  /// when the agency publishes no hours (every slot is then available).
+  ///
+  /// Memoised because `_isTimeSlotAvailable` runs once per slot — up to 48 —
+  /// on every rebuild of the schedule step. Previously each of those calls
+  /// re-filtered `_agencyWorkingHours` and re-parsed four `HH:mm` strings per
+  /// window; now the parse happens once per (date, hours) pair.
+  List<(int, int)>? _availabilityWindows;
+  int? _availabilityWindowsDay;
+  int _availabilityWindowsStamp = -1;
+
+  List<(int, int)>? _resolveAvailabilityWindows() {
+    if (_agencyWorkingHours.isEmpty) return null;
+    final dayOfWeek = _selectedDate.weekday % 7;
+    final stamp = identityHashCode(_agencyWorkingHours);
+    if (_availabilityWindowsDay == dayOfWeek &&
+        _availabilityWindowsStamp == stamp) {
+      return _availabilityWindows;
+    }
+    final windows = <(int, int)>[];
+    for (final h in _agencyWorkingHours) {
+      if (h['dayOfWeek'] != dayOfWeek) continue;
+      final start = _parseHhMm(h['start'] as String?);
+      final end = _parseHhMm(h['end'] as String?);
+      if (start == null || end == null) continue;
+      windows.add((start, end));
+    }
+    _availabilityWindows = windows;
+    _availabilityWindowsDay = dayOfWeek;
+    _availabilityWindowsStamp = stamp;
+    return windows;
+  }
+
+  /// Parses `HH:mm` into minutes-since-midnight, or null if malformed.
+  static int? _parseHhMm(String? value) {
+    if (value == null) return null;
+    final parts = value.split(':');
+    if (parts.length < 2) return null;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    if (h == null || m == null) return null;
+    return h * 60 + m;
+  }
+
   bool _isTimeSlotAvailable(String time) {
     // East African cross-border booking requires 2+ days advance (enforced on
     // the calendar), so no same-day/curfew restrictions apply to time slots.
-    if (_agencyWorkingHours.isEmpty) return true;
-    final dayOfWeek = _selectedDate.weekday % 7;
-    final relevantHours = _agencyWorkingHours.where((h) => h['dayOfWeek'] == dayOfWeek).toList();
-    if (relevantHours.isEmpty) return false;
-    final parts = time.split(':');
-    final timeMinutes = int.parse(parts[0]) * 60 + int.parse(parts[1]);
-    for (final h in relevantHours) {
-      final startParts = (h['start'] as String).split(':');
-      final endParts = (h['end'] as String).split(':');
-      final startMin = int.parse(startParts[0]) * 60 + int.parse(startParts[1]);
-      final endMin = int.parse(endParts[0]) * 60 + int.parse(endParts[1]);
-      if (timeMinutes >= startMin && timeMinutes < endMin) return true;
+    final windows = _resolveAvailabilityWindows();
+    if (windows == null) return true;
+    if (windows.isEmpty) return false;
+    final minutes = _parseHhMm(time);
+    if (minutes == null) return false;
+    for (final w in windows) {
+      if (minutes >= w.$1 && minutes < w.$2) return true;
     }
     return false;
   }
@@ -328,6 +411,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         _searchingRoutes = false;
       }),
     );
+
+    // Release anyone waiting for the sheet to have rows to show.
+    for (final listener in [..._routeSearchListeners]) {
+      listener();
+    }
   }
 
   // ── Navigation ──
@@ -364,6 +452,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         ..reset()
         ..forward();
       _scrollToTop();
+      // The agency picker opens on its own once the step is showing: the user
+      // already committed to this leg of the trip by tapping Continue, so
+      // making them tap a collapsed selector first is a wasted step.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _openAgencyModal();
+      });
       return;
     }
 
@@ -402,6 +497,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   /// Drives the pulsing "select travel hour" hint on the schedule step. It
   /// blinks while the user still needs to pick a departure time and stops as
   /// soon as one is chosen (or when leaving the step).
+  ///
+  /// Called from [build] through [_scheduleBlinkSync] rather than directly:
+  /// [repeat]/[stop] drive a [Ticker], which marks the widget dirty and can
+  /// re-enter the build phase from inside the current one.
   void _syncBlink() {
     final shouldBlink = _currentStep == 2 && _selectedTime == null;
     if (shouldBlink && !_blinkController.isAnimating) {
@@ -410,6 +509,18 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       _blinkController.stop();
       _blinkController.value = 1.0;
     }
+  }
+
+  /// Defers [_syncBlink] to after the current frame, coalescing repeat calls
+  /// into a single post-frame callback.
+  void _scheduleBlinkSync() {
+    if (_blinkSyncScheduled) return;
+    _blinkSyncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _blinkSyncScheduled = false;
+      if (!mounted) return;
+      _syncBlink();
+    });
   }
 
   /// Scrolls the schedule step so the departure-time selection is centred.
@@ -863,14 +974,33 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     }
   }
 
-  /// Polls the booking status every 1s while the payment is being awaited, so
-  /// the app reflects the real server outcome (paid or failed) that the system
-  /// admin sees. Uses the public track endpoint by reference code, which reads
-  /// the authoritative booking status the pawaPay webhook / sweeper updates.
+  /// Polls the booking status while the payment is being awaited, so the app
+  /// reflects the real server outcome (paid or failed) that the system admin
+  /// sees. Uses the public track endpoint by reference code, which reads the
+  /// authoritative booking status the pawaPay webhook / sweeper updates.
+  ///
+  /// The interval backs off from [_minPaymentPollMs] up to [_maxPaymentPollMs]
+  /// while the payment stays pending. A flat 1s `Timer.periodic` hammered the
+  /// endpoint with the same answer for the whole window; the authoritative
+  /// outcome still arrives promptly because the socket pushes
+  /// `payment:confirmed` and the abandon timer does a final check at 40s.
   void _startPaymentPolling() {
+    _paymentPollIntervalMs = _minPaymentPollMs;
+    _scheduleNextPaymentPoll();
+  }
+
+  void _scheduleNextPaymentPoll() {
     _paymentPollTimer?.cancel();
-    _paymentPollTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      _verifyPayment();
+    _paymentPollTimer =
+        Timer(Duration(milliseconds: _paymentPollIntervalMs), () async {
+      if (!mounted) return;
+      await _verifyPayment();
+      if (!mounted) return;
+      // Keep polling only while we're still waiting on a terminal outcome.
+      if (!_paymentWaiting) return;
+      _paymentPollIntervalMs =
+          (_paymentPollIntervalMs * 2).clamp(_minPaymentPollMs, _maxPaymentPollMs);
+      _scheduleNextPaymentPoll();
     });
   }
 
@@ -986,7 +1116,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   @override
   Widget build(BuildContext context) {
-    _syncBlink();
+    _scheduleBlinkSync();
     if (_paymentFailed) return _buildPaymentFailedView();
     if (_bookingConfirmed) return _buildConfirmedView();
     if (_paymentWaiting) return _buildPaymentWaitingView();
@@ -1228,9 +1358,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   void _openDestinationPicker() {
-    final l10n = AppLocalizations.of(context);
     _showLocationPicker(
-      title: l10n.translate('select_destination_picker'),
+      titleKey: 'select_destination_picker',
       currentValue: _destination,
       exclude: _origin,
       groups: _eastAfricaByCountry,
@@ -1243,9 +1372,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   void _openOriginPicker() {
-    final l10n = AppLocalizations.of(context);
     _showLocationPicker(
-      title: l10n.translate('select_origin'),
+      titleKey: 'select_origin',
       currentValue: _origin,
       exclude: _destination,
       groups: _eastAfricaByCountry,
@@ -1293,7 +1421,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   Future<void> _showLocationPicker({
-    required String title,
+    required String titleKey,
     required ValueChanged<String> onSelected,
     String? exclude,
     String? currentValue,
@@ -1308,17 +1436,16 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         : List<String>.from(base);
     final hasGroups = groups != null;
 
-    final result = await showModalBottomSheet<String>(
+    final result = await showKatishaModal<String>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppSpacing.radiusMd)),
-      ),
       builder: (ctx) {
         var query = '';
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
+            // Resolve localizations from the modal's own context on every
+            // build so the sheet follows live language changes, and always
+            // uses the locale that was active when it was opened.
+            final l10n = AppLocalizations.of(ctx);
             final q = query.trim().toLowerCase();
             final filtered = q.isEmpty
                 ? baseFiltered
@@ -1337,154 +1464,153 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 filteredGroups.add(MapEntry(entry.key, cities));
               }
             }
-            return DraggableScrollableSheet(
-              initialChildSize: 0.5,
-              minChildSize: 0.35,
-              maxChildSize: 0.7,
-              expand: false,
-              builder: (ctx, scrollController) {
-                return Column(
-                  children: [
-                    const SizedBox(height: 12),
-                    Container(
-                      width: 40,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: AppColors.border,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
+            // Flat header/city rows so the list can build lazily.
+            final rows = hasGroups ? _flattenGroupedRows(filteredGroups) : const <_GroupedRow>[];
+
+            return KatishaModal(
+              title: l10n.translate(titleKey),
+              closeLabel: l10n.translate('close'),
+              bodyScrollable: false,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (showSearch)
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-                      child: Text(
-                        title,
-                        style: AppTypography.titleLarge,
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                    if (showSearch) ...[
-                      const SizedBox(height: AppSpacing.sm),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-                        child: TextField(
-                          onChanged: (v) => setSheetState(() => query = v),
-                          textInputAction: TextInputAction.search,
-                          style: AppTypography.bodyMedium,
-                          decoration: InputDecoration(
-                            hintText: AppLocalizations.of(ctx).translate('search_location'),
-                            hintStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
-                            prefixIcon: const Icon(Icons.search, size: 20, color: AppColors.primary),
-                            isDense: true,
-                            filled: true,
-                            fillColor: AppColors.white,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: AppSpacing.md,
-                              vertical: 10,
-                            ),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                              borderSide: const BorderSide(color: AppColors.primary),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                              borderSide: const BorderSide(color: AppColors.primary),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                              borderSide: const BorderSide(color: AppColors.primary, width: 2),
-                            ),
+                      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                      child: TextField(
+                        onChanged: (v) => setSheetState(() => query = v),
+                        textInputAction: TextInputAction.search,
+                        style: AppTypography.bodyMedium,
+                        decoration: InputDecoration(
+                          hintText: l10n.translate('search_location'),
+                          hintStyle:
+                              AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
+                          prefixIcon: const Icon(Icons.search,
+                              size: 20, color: AppColors.primary),
+                          isDense: true,
+                          filled: true,
+                          fillColor: AppColors.white,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.md,
+                            vertical: 10,
+                          ),
+                          border: OutlineInputBorder(
+                            borderRadius:
+                                BorderRadius.circular(AppSpacing.radiusSm),
+                            borderSide:
+                                const BorderSide(color: AppColors.primary),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius:
+                                BorderRadius.circular(AppSpacing.radiusSm),
+                            borderSide:
+                                const BorderSide(color: AppColors.primary),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius:
+                                BorderRadius.circular(AppSpacing.radiusSm),
+                            borderSide: const BorderSide(
+                                color: AppColors.primary, width: 2),
                           ),
                         ),
                       ),
-                    ],
-                    const SizedBox(height: 8),
-                    const Divider(height: 1),
-                    Expanded(
-                      child: (hasGroups ? filteredGroups.isEmpty : filtered.isEmpty)
-                          ? Center(
-                              child: Text(
-                                'No locations found',
-                                style: AppTypography.bodyMedium.copyWith(
-                                  color: AppColors.textMuted,
-                                ),
-                              ),
-                            )
-                          : hasGroups
-                              ? ListView(
-                                  controller: scrollController,
-                                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                                  children: [
-                                    for (final entry in filteredGroups) ...[
-                                      Padding(
-                                        padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-                                        child: Text(
-                                          entry.key,
-                                          style: AppTypography.labelSmall.copyWith(
-                                            color: AppColors.textMuted,
-                                            fontWeight: FontWeight.w700,
-                                            letterSpacing: 0.6,
-                                          ),
-                                        ),
-                                      ),
-                                      for (final city in entry.value)
-                                        ListTile(
-                                          dense: true,
-                                          selected: city == currentValue,
-                                          selectedTileColor: AppColors.primaryLight,
-                                          leading: Icon(
-                                            city == currentValue
-                                                ? Icons.radio_button_checked
-                                                : Icons.radio_button_unchecked,
-                                            color: city == currentValue
-                                                ? AppColors.primary
-                                                : AppColors.textMuted,
-                                            size: 20,
-                                          ),
-                                          title: Text(
-                                            city,
-                                            style: AppTypography.bodyLarge.copyWith(
-                                              fontWeight: city == currentValue
-                                                  ? FontWeight.w600
-                                                  : FontWeight.w400,
-                                            ),
-                                          ),
-                                          onTap: () => Navigator.pop(ctx, city),
-                                        ),
-                                    ],
-                                  ],
-                                )
-                              : ListView.separated(
-                                  controller: scrollController,
-                                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.xs),
-                                  itemCount: filtered.length,
-                                  separatorBuilder: (_, _2) => const Divider(height: 1, indent: 16, endIndent: 16),
-                                  itemBuilder: (ctx, index) {
-                                    final city = filtered[index];
-                                    final isSelected = city == currentValue;
-                                    return ListTile(
-                                      dense: true,
-                                      selected: isSelected,
-                                      selectedTileColor: AppColors.primaryLight,
-                                      leading: Icon(
-                                        isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
-                                        color: isSelected ? AppColors.primary : AppColors.textMuted,
-                                        size: 20,
-                                      ),
-                                      title: Text(
-                                        city,
-                                        style: AppTypography.bodyLarge.copyWith(
-                                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                                        ),
-                                      ),
-                                      onTap: () => Navigator.pop(ctx, city),
-                                    );
-                                  },
-                                ),
                     ),
-                  ],
-                );
-              },
+                  Expanded(
+                    child: (hasGroups
+                            ? filteredGroups.isEmpty
+                            : filtered.isEmpty)
+                        ? Center(
+                            child: Text(
+                              l10n.translate('no_locations_found'),
+                              style: AppTypography.bodyMedium
+                                  .copyWith(color: AppColors.textMuted),
+                            ),
+                          )
+                        : hasGroups
+                            ? ListView.builder(
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: AppSpacing.xs),
+                                itemCount: rows.length,
+                                itemBuilder: (ctx, index) {
+                                  final row = rows[index];
+                                  if (row.header != null) {
+                                    return Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                          16, 14, 16, 4),
+                                      child: Text(
+                                        row.header!,
+                                        style: AppTypography.labelSmall.copyWith(
+                                          color: AppColors.textMuted,
+                                          fontWeight: FontWeight.w700,
+                                          letterSpacing: 0.6,
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                  final city = row.city!;
+                                  final isSelected = city == currentValue;
+                                  return ListTile(
+                                    dense: true,
+                                    selected: isSelected,
+                                    selectedTileColor: AppColors.primaryLight,
+                                    leading: Icon(
+                                      isSelected
+                                          ? Icons.radio_button_checked
+                                          : Icons.radio_button_unchecked,
+                                      color: isSelected
+                                          ? AppColors.primary
+                                          : AppColors.textMuted,
+                                      size: 20,
+                                    ),
+                                    title: Text(
+                                      city,
+                                      style: AppTypography.bodyLarge.copyWith(
+                                        fontWeight: isSelected
+                                            ? FontWeight.w600
+                                            : FontWeight.w400,
+                                      ),
+                                    ),
+                                    onTap: () => Navigator.pop(ctx, city),
+                                  );
+                                },
+                              )
+                            : ListView.separated(
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: AppSpacing.xs),
+                                itemCount: filtered.length,
+                                separatorBuilder: (_, _2) => const Divider(
+                                    height: 1, indent: 16, endIndent: 16),
+                                itemBuilder: (ctx, index) {
+                                  final city = filtered[index];
+                                  final isSelected = city == currentValue;
+                                  return ListTile(
+                                    dense: true,
+                                    selected: isSelected,
+                                    selectedTileColor: AppColors.primaryLight,
+                                    leading: Icon(
+                                      isSelected
+                                          ? Icons.radio_button_checked
+                                          : Icons.radio_button_unchecked,
+                                      color: isSelected
+                                          ? AppColors.primary
+                                          : AppColors.textMuted,
+                                      size: 20,
+                                    ),
+                                    title: Text(
+                                      city,
+                                      style: AppTypography.bodyLarge.copyWith(
+                                        fontWeight: isSelected
+                                            ? FontWeight.w600
+                                            : FontWeight.w400,
+                                      ),
+                                    ),
+                                    onTap: () => Navigator.pop(ctx, city),
+                                  );
+                                },
+                              ),
+                  ),
+                ],
+              ),
             );
           },
         );
@@ -1537,140 +1663,415 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         else if (_routes.isEmpty)
           _buildNoRoutes()
         else ...[
-          if (_selectedRoute == null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.md),
-              child: Text(
+          // The agency and pickup point are chosen in the shared Katisha modal
+          // so this step matches the destination, date and hour steps.
+          _buildLocationSelector(
+            label: l10n.translate('title_agency'),
+            icon: Icons.directions_bus_outlined,
+            value: _selectedRoute?.agency.name ??
                 l10n.translate('select_agency_continue'),
-                style: AppTypography.bodySmall.copyWith(color: AppColors.textMuted),
-                textAlign: TextAlign.center,
-              ),
-            ),
-          _buildRouteList(),
-          // Pickup points section
+            onTap: _openAgencyModal,
+          ),
+          // Once an agency is picked, its pickup points stay on the step so the
+          // choice is visible without reopening the modal.
           if (_selectedRoute != null && _selectedRoute!.stops.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.lg),
-            _buildLabel('PICKUP POINT'),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              'Choose your pickup point',
-              style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final itemWidth = (constraints.maxWidth - AppSpacing.sm) / 2;
-                return Wrap(
-                  spacing: AppSpacing.sm,
-                  runSpacing: AppSpacing.sm,
-                  children: [
-                    ..._selectedRoute!.stops
-                        .where((s) =>
-                            s.name.toLowerCase() != _origin!.toLowerCase() &&
-                            s.name.toLowerCase() != _destination!.toLowerCase())
-                        .map((stop) {
-                      final isSelected = _selectedPickupPoint == stop.name;
-                      return SizedBox(
-                        width: itemWidth,
-                        child: GestureDetector(
-                          onTap: () {
-                            setState(() => _selectedPickupPoint = stop.name);
-                            _scheduleAutoAdvance();
-                          },
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 200),
-                            padding: const EdgeInsets.all(AppSpacing.md),
-                            decoration: BoxDecoration(
-                              color: isSelected ? AppColors.primaryLight : AppColors.white,
-                              borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                              border: Border.all(
-                                color: isSelected ? AppColors.primary : AppColors.border,
-                                width: isSelected ? 2 : 1,
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.location_on_outlined,
-                                  size: 18,
-                                  color: isSelected ? AppColors.primary : AppColors.textMuted,
-                                ),
-                                const SizedBox(width: AppSpacing.sm),
-                                Expanded(
-                                  child: Text(
-                                    stop.name,
-                                    style: AppTypography.bodyMedium.copyWith(
-                                      color: isSelected ? AppColors.primary : AppColors.text,
-                                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                                    ),
-                                  ),
-                                ),
-                                if (isSelected)
-                                  const Icon(Icons.check_circle, size: 18, color: AppColors.primary),
-                              ],
-                            ),
-                          ),
+            _buildPickupPoints(),
+          ],
+        ],
+      ],
+    );
+  }
+
+  // Opens the agency picker in the shared Katisha modal: a bottom sheet fixed at
+  // 89% of the screen height, laid out exactly like the destination picker — a
+  // search field over a flat selectable list — so the two feel identical.
+  Future<void> _openAgencyModal() async {
+    final l10n = AppLocalizations.of(context);
+
+    // Nothing to pick from yet: wait for the route search instead of flashing
+    // an empty sheet.
+    if (_searchingRoutes) {
+      await _waitForRouteSearch();
+      if (!mounted) return;
+    }
+    if (_routes.isEmpty) return;
+
+    await showKatishaModal<void>(
+      context: context,
+      transitionDuration: _sheetAnimDuration,
+      builder: (ctx) {
+        var query = '';
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final q = query.trim().toLowerCase();
+            final filtered = q.isEmpty
+                ? _routes
+                : _routes.where((r) {
+                    final haystack =
+                        '${r.agency.name} ${r.origin} ${r.destination}'.toLowerCase();
+                    return haystack.contains(q);
+                  }).toList();
+
+            return KatishaModal(
+              title: l10n.translate('title_agency'),
+              subtitle: '$_origin → $_destination',
+              closeLabel: l10n.translate('close'),
+              bodyScrollable: false,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                    child: TextField(
+                      onChanged: (v) => setSheetState(() => query = v),
+                      textInputAction: TextInputAction.search,
+                      style: AppTypography.bodyMedium,
+                      decoration: InputDecoration(
+                        hintText: l10n.translate('search_location'),
+                        hintStyle: AppTypography.bodyMedium
+                            .copyWith(color: AppColors.textMuted),
+                        prefixIcon: const Icon(Icons.search,
+                            size: 20, color: AppColors.primary),
+                        isDense: true,
+                        filled: true,
+                        fillColor: AppColors.white,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.md,
+                          vertical: 10,
                         ),
-                      );
-                    }),
-                    SizedBox(
-                      width: itemWidth,
-                      child: GestureDetector(
-                        onTap: () {
-                          setState(() => _selectedPickupPoint = 'Bus Station');
-                          _scheduleAutoAdvance();
-                        },
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          padding: const EdgeInsets.all(AppSpacing.md),
-                          decoration: BoxDecoration(
-                            color: _selectedPickupPoint == 'Bus Station'
-                                ? AppColors.primaryLight
-                                : AppColors.white,
-                            borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                            border: Border.all(
-                              color: _selectedPickupPoint == 'Bus Station'
-                                  ? AppColors.primary
-                                  : AppColors.border,
-                              width: _selectedPickupPoint == 'Bus Station' ? 2 : 1,
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.business,
-                                size: 18,
-                                color: _selectedPickupPoint == 'Bus Station'
-                                    ? AppColors.primary
-                                    : AppColors.textMuted,
-                              ),
-                              const SizedBox(width: AppSpacing.sm),
-                              Expanded(
-                                child: Text(
-                                  'Bus Station',
-                                  style: AppTypography.bodyMedium.copyWith(
-                                    color: _selectedPickupPoint == 'Bus Station'
-                                        ? AppColors.primary
-                                        : AppColors.text,
-                                    fontWeight: _selectedPickupPoint == 'Bus Station'
-                                        ? FontWeight.w600
-                                        : FontWeight.w400,
-                                  ),
-                                ),
-                              ),
-                              if (_selectedPickupPoint == 'Bus Station')
-                                const Icon(Icons.check_circle, size: 18, color: AppColors.primary),
-                            ],
-                          ),
+                        border: OutlineInputBorder(
+                          borderRadius:
+                              BorderRadius.circular(AppSpacing.radiusSm),
+                          borderSide:
+                              const BorderSide(color: AppColors.primary),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius:
+                              BorderRadius.circular(AppSpacing.radiusSm),
+                          borderSide:
+                              const BorderSide(color: AppColors.primary),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius:
+                              BorderRadius.circular(AppSpacing.radiusSm),
+                          borderSide: const BorderSide(
+                              color: AppColors.primary, width: 2),
                         ),
                       ),
                     ),
+                  ),
+                  Expanded(
+                    child: filtered.isEmpty
+                        ? Center(
+                            child: Text(
+                              l10n.translate('no_routes_found'),
+                              style: AppTypography.bodyMedium
+                                  .copyWith(color: AppColors.textMuted),
+                            ),
+                          )
+                        : ListView.separated(
+                            padding: const EdgeInsets.symmetric(
+                                vertical: AppSpacing.xs),
+                            itemCount: filtered.length,
+                            separatorBuilder: (_, _) => const Divider(
+                              height: 1,
+                              color: AppColors.border,
+                            ),
+                            itemBuilder: (context, index) => _buildAgencyRow(
+                                filtered[index], ctx, setSheetState),
+                          ),
+                  ),
+                  if (_selectedRoute != null &&
+                      _selectedRoute!.stops.isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    _buildPickupPoints(),
                   ],
-                );
-              },
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // A single agency row, styled like a destination row: circular avatar, name,
+  // supporting line and the total price on the trailing edge.
+  Widget _buildAgencyRow(
+    dynamic route,
+    BuildContext sheetCtx,
+    StateSetter setSheetState,
+  ) {
+    final isSelected = _selectedRoute?.id == route.id;
+    final effectivePrice = route.effectivePrice ?? route.price;
+    final serviceFee = systemFeeFor(route.type, effectivePrice, 1).round();
+    final onlineFee = (effectivePrice * _payoutRate).round() + _payoutFixed;
+    final total = effectivePrice + serviceFee + onlineFee;
+    final hasDiscount =
+        route.effectivePrice != null && route.effectivePrice != route.price;
+    final name = route.agency.name;
+
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _selectedRoute = route;
+          _selectedPickupPoint = null;
+        });
+        _fetchAgencyWorkingHours(route.agency.id);
+        // No intermediate pickup points to choose: move straight on.
+        final hasPickupStops = route.stops.any((s) =>
+            s.name.toLowerCase() != _origin!.toLowerCase() &&
+            s.name.toLowerCase() != _destination!.toLowerCase());
+        if (hasPickupStops) {
+          setSheetState(() {});
+        } else {
+          Navigator.pop(sheetCtx);
+          _scheduleAutoAdvance();
+        }
+      },
+      child: Container(
+        color: isSelected ? AppColors.primaryLight : null,
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? AppColors.primary
+                    : AppColors.primaryLight,
+                borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
+              ),
+              child: Center(
+                child: Text(
+                  name.isNotEmpty ? name[0].toUpperCase() : '?',
+                  style: AppTypography.titleMedium.copyWith(
+                    color: isSelected ? AppColors.white : AppColors.primary,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: AppSpacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    style: AppTypography.bodyLarge.copyWith(
+                      fontWeight:
+                          isSelected ? FontWeight.w700 : FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    '${route.origin} → ${route.destination}'
+                    '${route.estimatedDuration != null ? ' · ${route.estimatedDuration}' : ''}',
+                    style: AppTypography.bodySmall
+                        .copyWith(color: AppColors.textSub),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '${_formatAmount(total)} RWF',
+                  style: AppTypography.titleSmall.copyWith(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (hasDiscount) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    '${_formatAmount(route.price)} RWF',
+                    style: AppTypography.labelSmall.copyWith(
+                      color: AppColors.textMuted,
+                      decoration: TextDecoration.lineThrough,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Icon(
+              isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
+              size: 20,
+              color: isSelected ? AppColors.primary : AppColors.textMuted,
             ),
           ],
-        ],
+        ),
+      ),
+    );
+  }
+
+  // Waits for the in-flight route search so the auto-opened sheet has rows.
+  Future<void> _waitForRouteSearch() async {
+    final completer = Completer<void>();
+    void listener() {
+      if (!_searchingRoutes && !completer.isCompleted) completer.complete();
+    }
+
+    _routeSearchListeners.add(listener);
+    // Re-check immediately in case the search already finished.
+    listener();
+    if (completer.isCompleted) {
+      _routeSearchListeners.remove(listener);
+      return;
+    }
+
+    await completer.future;
+    _routeSearchListeners.remove(listener);
+  }
+
+  // Pickup-point chips for the selected agency.
+  Widget _buildPickupPoints() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildLabel('PICKUP POINT'),
+        const SizedBox(height: AppSpacing.sm),
+        Text(
+          'Choose your pickup point',
+          style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final itemWidth = (constraints.maxWidth - AppSpacing.sm) / 2;
+            return Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.sm,
+              children: [
+                ..._selectedRoute!.stops
+                    .where((s) =>
+                        s.name.toLowerCase() != _origin!.toLowerCase() &&
+                        s.name.toLowerCase() != _destination!.toLowerCase())
+                    .map((stop) {
+                  final isSelected = _selectedPickupPoint == stop.name;
+                  return SizedBox(
+                    width: itemWidth,
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() => _selectedPickupPoint = stop.name);
+                        _scheduleAutoAdvance();
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        padding: const EdgeInsets.all(AppSpacing.md),
+                        decoration: BoxDecoration(
+                          color: isSelected
+                              ? AppColors.primaryLight
+                              : AppColors.white,
+                          borderRadius:
+                              BorderRadius.circular(AppSpacing.radiusMd),
+                          border: Border.all(
+                            color: isSelected
+                                ? AppColors.primary
+                                : AppColors.border,
+                            width: isSelected ? 2 : 1,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.location_on_outlined,
+                              size: 18,
+                              color: isSelected
+                                  ? AppColors.primary
+                                  : AppColors.textMuted,
+                            ),
+                            const SizedBox(width: AppSpacing.sm),
+                            Expanded(
+                              child: Text(
+                                stop.name,
+                                style: AppTypography.bodyMedium.copyWith(
+                                  color: isSelected
+                                      ? AppColors.primary
+                                      : AppColors.text,
+                                  fontWeight: isSelected
+                                      ? FontWeight.w600
+                                      : FontWeight.w400,
+                                ),
+                              ),
+                            ),
+                            if (isSelected)
+                              const Icon(Icons.check_circle,
+                                  size: 18, color: AppColors.primary),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }),
+                SizedBox(
+                  width: itemWidth,
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() => _selectedPickupPoint = 'Bus Station');
+                      _scheduleAutoAdvance();
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: _selectedPickupPoint == 'Bus Station'
+                            ? AppColors.primaryLight
+                            : AppColors.white,
+                        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                        border: Border.all(
+                          color: _selectedPickupPoint == 'Bus Station'
+                              ? AppColors.primary
+                              : AppColors.border,
+                          width: _selectedPickupPoint == 'Bus Station' ? 2 : 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.business,
+                            size: 18,
+                            color: _selectedPickupPoint == 'Bus Station'
+                                ? AppColors.primary
+                                : AppColors.textMuted,
+                          ),
+                          const SizedBox(width: AppSpacing.sm),
+                          Expanded(
+                            child: Text(
+                              'Bus Station',
+                              style: AppTypography.bodyMedium.copyWith(
+                                color: _selectedPickupPoint == 'Bus Station'
+                                    ? AppColors.primary
+                                    : AppColors.text,
+                                fontWeight:
+                                    _selectedPickupPoint == 'Bus Station'
+                                        ? FontWeight.w600
+                                        : FontWeight.w400,
+                              ),
+                            ),
+                          ),
+                          if (_selectedPickupPoint == 'Bus Station')
+                            const Icon(Icons.check_circle,
+                                size: 18, color: AppColors.primary),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ],
     );
   }
@@ -1725,174 +2126,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
-  Widget _buildRouteList() {
-    return Column(
-      children: _routes.map((route) {
-        final isSelected = _selectedRoute?.id == route.id;
-        final effectivePrice = route.effectivePrice ?? route.price;
-        final serviceFee = systemFeeFor(route.type, effectivePrice, 1).round();
-        final onlineFee = (effectivePrice * _payoutRate).round() + _payoutFixed;
-        final total = effectivePrice + serviceFee + onlineFee;
-        final oldServiceFee = systemFeeFor(route.type, route.price, 1).round();
-        final oldOnlineFee = (route.price * _payoutRate).round() + _payoutFixed;
-        final oldTotal = route.price + oldServiceFee + oldOnlineFee;
-
-        return Padding(
-          padding: const EdgeInsets.only(bottom: AppSpacing.md),
-          child: GestureDetector(
-            onTap: () {
-              setState(() {
-                _selectedRoute = route;
-                _selectedPickupPoint = null;
-              });
-              _fetchAgencyWorkingHours(route.agency.id);
-              // If no stops to pick from, auto-advance
-              final hasPickupStops = route.stops.any((s) =>
-                  s.name.toLowerCase() != _origin!.toLowerCase() &&
-                  s.name.toLowerCase() != _destination!.toLowerCase());
-              if (!hasPickupStops) {
-                _scheduleAutoAdvance();
-              }
-            },
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  decoration: BoxDecoration(
-                    gradient: isSelected
-                        ? LinearGradient(
-                            colors: [AppColors.primary, AppColors.primaryDark],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          )
-                        : null,
-                    color: isSelected ? null : AppColors.white,
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                    border: Border.all(color: AppColors.primary, width: 2),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: isSelected
-                                  ? AppColors.white.withValues(alpha: 0.2)
-                                  : AppColors.primaryLight,
-                              borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
-                            ),
-                            child: Center(
-                              child: Text(
-                                route.agency.name.isNotEmpty
-                                    ? route.agency.name[0].toUpperCase()
-                                    : '?',
-                                style: AppTypography.titleMedium.copyWith(
-                                  color: isSelected ? AppColors.white : AppColors.primary,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: AppSpacing.md),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  route.agency.name,
-                                  style: AppTypography.titleSmall.copyWith(
-                                    color: isSelected ? AppColors.white : AppColors.text,
-                                  ),
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${route.origin} → ${route.destination}',
-                                  style: AppTypography.bodySmall.copyWith(
-                                    color: isSelected
-                                        ? AppColors.white.withValues(alpha: 0.8)
-                                        : AppColors.textSub,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      Row(
-                        children: [
-                          Text(
-                            '${_formatAmount(total)} RWF',
-                            style: AppTypography.titleLarge.copyWith(
-                              color: isSelected ? AppColors.white : AppColors.primary,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          if (route.effectivePrice != null &&
-                              route.effectivePrice != route.price) ...[
-                            const SizedBox(width: AppSpacing.sm),
-                            Text(
-                              '${_formatAmount(oldTotal)} RWF',
-                              style: AppTypography.bodySmall.copyWith(
-                                color: isSelected
-                                    ? AppColors.white.withValues(alpha: 0.6)
-                                    : AppColors.textMuted,
-                                decoration: TextDecoration.lineThrough,
-                              ),
-                            ),
-                          ],
-                          const Spacer(),
-                          if (isSelected && route.estimatedDuration != null)
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.access_time,
-                                  size: 14,
-                                  color: AppColors.white.withValues(alpha: 0.8),
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  route.estimatedDuration!,
-                                  style: AppTypography.bodySmall.copyWith(
-                                    color: AppColors.white.withValues(alpha: 0.8),
-                                  ),
-                                ),
-                              ],
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: AppSpacing.xs),
-                    ],
-                  ),
-                ),
-                Positioned(
-                  left: -3,
-                  top: 0,
-                  bottom: 0,
-                  child: Center(
-                    child: Container(
-                      width: 6,
-                      height: 40,
-                      decoration: BoxDecoration(
-                        color: AppColors.primary,
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
 
   // ── Step 2: Schedule ──
 
@@ -1938,96 +2171,47 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
-  // Opens the travel-date calendar from a bottom sheet (mirrors the
-  // destination picker: modal slides up from the bottom).
+  // Opens the travel-date calendar in the shared Katisha modal: a centred
+  // panel fixed at 89% of the screen height, same as the destination picker.
   Future<void> _openDatePickerModal() async {
     final l10n = AppLocalizations.of(context);
-    await showModalBottomSheet<void>(
+    await showKatishaModal<void>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppSpacing.radiusMd)),
-      ),
       builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setSheetState) {
-            return SafeArea(
-              top: false,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(AppSpacing.md),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      l10n.translate('travel_date'),
-                      style: AppTypography.titleLarge.copyWith(
-                        color: AppColors.text,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    _buildCalendar(
-                      onDatePicked: () {
-                        Navigator.pop(ctx);
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted) _openTimePickerModal();
-                        });
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
+        return KatishaModal(
+          title: l10n.translate('travel_date'),
+          closeLabel: l10n.translate('close'),
+          bodyScrollable: false,
+          child: _buildCalendar(
+            onDatePicked: () {
+              Navigator.pop(ctx);
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _openTimePickerModal();
+              });
+            },
+          ),
         );
       },
     );
   }
 
-  // Opens the departure-time picker from a bottom sheet (mirrors the
-  // destination picker: modal slides up from the bottom).
+  // Opens the departure-time picker in the shared Katisha modal. The slot grid
+  // can be taller than the panel on small screens, so the body scrolls.
   Future<void> _openTimePickerModal() async {
     final l10n = AppLocalizations.of(context);
     if (!_datePicked) {
       await _openDatePickerModal();
       return;
     }
-    await showModalBottomSheet<void>(
+    await showKatishaModal<void>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: AppColors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppSpacing.radiusMd)),
-      ),
       builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setSheetState) {
-            return SafeArea(
-              top: false,
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(AppSpacing.md),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      l10n.translate('departure_time'),
-                      style: AppTypography.titleLarge.copyWith(
-                        color: AppColors.text,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    _buildTimeSlots(
-                      onTimePicked: () => Navigator.pop(ctx),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
+        return KatishaModal(
+          title: l10n.translate('choose_available_hour'),
+          closeLabel: l10n.translate('close'),
+          child: _buildTimeSlots(
+            onTimePicked: () => Navigator.pop(ctx),
+          ),
         );
       },
     );
@@ -2505,27 +2689,21 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     }
   }
 
+  // Hosts the Pay Online dialog in the shared Katisha modal: a centred panel
+  // fixed at 89% of the screen height, matching the destination, date and hour
+  // pickers.
   void _showModal(Widget child) {
-    showModalBottomSheet<void>(
+    showKatishaModal<void>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: false,
-      backgroundColor: AppColors.white,
-      sheetAnimationStyle: const AnimationStyle(
-        duration: _sheetAnimDuration,
-        reverseDuration: _sheetAnimDuration,
-        curve: Curves.easeOutCubic,
-        reverseCurve: Curves.easeInCubic,
-      ),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (ctx) => child,
+      transitionDuration: _sheetAnimDuration,
+      builder: (_) => child,
     );
   }
 
   // Pay Online modal (matches web PaymentModal): pricing breakdown + phone +
-  // guest name + Pay button.
+  // guest name + Pay button. The Pay button sits directly under the last input
+  // instead of in the sheet footer, so it travels with the form rather than
+  // being stranded at the bottom of the tall panel on a long screen.
   Widget _buildOnlinePaymentModal() {
     final l10n = AppLocalizations.of(context);
     final effectivePrice = _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
@@ -2540,170 +2718,165 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
     return StatefulBuilder(
       builder: (context, setModalState) {
-        return Container(
-          padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.md, AppSpacing.lg, AppSpacing.md),
-          child: SafeArea(
-            top: false,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    l10n.translate('pay_online'),
-                    style: AppTypography.titleLarge.copyWith(fontWeight: FontWeight.w700),
+        return KatishaModal(
+          title: l10n.translate('pay_online'),
+          subtitle: l10n.translate('pay_online_desc'),
+          closeLabel: l10n.translate('close'),
+          bodyScrollable: false,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Pricing breakdown
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                   ),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    l10n.translate('pay_online_desc'),
-                    style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
+                  child: Column(
+                    children: [
+                      _buildSummaryRow(l10n.translate('total'), '${_formatAmount(onlineTotal)} RWF', isBold: true),
+                    ],
                   ),
-                  const SizedBox(height: AppSpacing.lg),
+                ),
+                const SizedBox(height: AppSpacing.lg),
 
-                  // Pricing breakdown
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(AppSpacing.md),
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                    ),
-                    child: Column(
-                      children: [
-                        _buildSummaryRow(l10n.translate('total'), '${_formatAmount(onlineTotal)} RWF', isBold: true),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.lg),
-
-                  if (!_isLoggedIn) ...[
-                    _buildLabel(l10n.translate('your_name')),
-                    const SizedBox(height: AppSpacing.sm),
-                    TextFormField(
-                      controller: _guestNameController,
-                      style: AppTypography.bodyLarge,
-                      decoration: InputDecoration(
-                        hintText: 'Enter your full name',
-                        hintStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
-                        prefixIcon: const Icon(Icons.person_outline, size: 20),
-                        filled: true,
-                        fillColor: AppColors.white,
-                        errorText: nameError.isEmpty ? null : nameError,
-                        errorMaxLines: 2,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                          borderSide: BorderSide(
-                            color: nameError.isEmpty ? AppColors.border : AppColors.error,
-                          ),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                          borderSide: BorderSide(
-                            color: nameError.isEmpty ? AppColors.border : AppColors.error,
-                          ),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                          borderSide: const BorderSide(color: AppColors.primary, width: 2),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.md),
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.lg),
-                  ],
-
-                  _buildLabel(l10n.translate('payment_phone_label')),
+                if (!_isLoggedIn) ...[
+                  _buildLabel(l10n.translate('your_name')),
                   const SizedBox(height: AppSpacing.sm),
                   TextFormField(
-                    controller: _phoneController,
-                    keyboardType: TextInputType.phone,
-                    maxLength: 12,
+                    controller: _guestNameController,
                     style: AppTypography.bodyLarge,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                     decoration: InputDecoration(
-                      hintText: '07X XXX XXXX or 2507XXXXXXXX',
+                      hintText: 'Enter your full name',
                       hintStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
-                      prefixIcon: const Icon(Icons.phone_outlined, size: 20),
+                      prefixIcon: const Icon(Icons.person_outline, size: 20),
                       filled: true,
                       fillColor: AppColors.white,
-                      errorText: phoneError.isEmpty ? null : phoneError,
+                      errorText: nameError.isEmpty ? null : nameError,
                       errorMaxLines: 2,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                         borderSide: BorderSide(
-                          color: phoneError.isEmpty ? AppColors.border : AppColors.error,
+                          color: nameError.isEmpty ? AppColors.border : AppColors.error,
                         ),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                         borderSide: BorderSide(
-                          color: phoneError.isEmpty ? AppColors.border : AppColors.error,
+                          color: nameError.isEmpty ? AppColors.border : AppColors.error,
                         ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                         borderSide: const BorderSide(color: AppColors.primary, width: 2),
                       ),
-                      counterText: '',
                       contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.md),
                     ),
                   ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    l10n.translate('account_auto_created'),
-                    style: AppTypography.bodySmall.copyWith(color: AppColors.textMuted, fontSize: 12),
-                  ),
                   const SizedBox(height: AppSpacing.lg),
-
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _isSubmitting
-                          ? null
-                          : () {
-                              final nameOk =
-                                  _guestNameController.text.trim().isNotEmpty ||
-                                      _isLoggedIn;
-                              final digits = _phoneController.text
-                                  .replaceAll(RegExp(r'[^0-9]'), '');
-                              setModalState(() {
-                                nameError =
-                                    nameOk ? '' : l10n.translate('please_enter_name');
-                                phoneError = digits.length >= 9
-                                    ? ''
-                                    : 'Please enter a valid payment phone number';
-                              });
-                              if (nameOk && digits.length >= 9) {
-                                ref.read(soundServiceProvider).vibrate();
-                                Navigator.of(context).pop();
-                                _submitBooking();
-                              }
-                            },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: AppColors.white,
-                        disabledBackgroundColor: AppColors.textMuted,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(AppSpacing.radiusMd)),
-                        elevation: 0,
-                      ),
-                      child: _isSubmitting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.white),
-                            )
-                          : Text(
-                              'Pay ${_formatAmount(onlineTotal)} RWF',
-                              style: AppTypography.titleMedium.copyWith(
-                                color: AppColors.white,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                    ),
-                  ),
                 ],
-              ),
+
+                _buildLabel(l10n.translate('payment_phone_label')),
+                const SizedBox(height: AppSpacing.sm),
+                TextFormField(
+                  controller: _phoneController,
+                  keyboardType: TextInputType.phone,
+                  maxLength: 12,
+                  style: AppTypography.bodyLarge,
+                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                  decoration: InputDecoration(
+                    hintText: '07X XXX XXXX or 2507XXXXXXXX',
+                    hintStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
+                    prefixIcon: const Icon(Icons.phone_outlined, size: 20),
+                    filled: true,
+                    fillColor: AppColors.white,
+                    errorText: phoneError.isEmpty ? null : phoneError,
+                    errorMaxLines: 2,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                      borderSide: BorderSide(
+                        color: phoneError.isEmpty ? AppColors.border : AppColors.error,
+                      ),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                      borderSide: BorderSide(
+                        color: phoneError.isEmpty ? AppColors.border : AppColors.error,
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                      borderSide: const BorderSide(color: AppColors.primary, width: 2),
+                    ),
+                    counterText: '',
+                    contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.md),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  l10n.translate('account_auto_created'),
+                  style: AppTypography.bodySmall.copyWith(color: AppColors.textMuted, fontSize: 12),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                // Pay button directly after the last input rather than pinned in
+                // the sheet footer, so it stays next to the form on tall screens
+                // and is never stranded at the bottom of the panel.
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _isSubmitting
+                        ? null
+                        : () {
+                            final nameOk =
+                                _guestNameController.text.trim().isNotEmpty ||
+                                    _isLoggedIn;
+                            final digits = _phoneController.text
+                                .replaceAll(RegExp(r'[^0-9]'), '');
+                            setModalState(() {
+                              nameError =
+                                  nameOk ? '' : l10n.translate('please_enter_name');
+                              phoneError = digits.length >= 9
+                                  ? ''
+                                  : 'Please enter a valid payment phone number';
+                            });
+                            if (nameOk && digits.length >= 9) {
+                              ref.read(soundServiceProvider).vibrate();
+                              Navigator.of(context).pop();
+                              _submitBooking();
+                            }
+                          },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: AppColors.white,
+                      disabledBackgroundColor: AppColors.textMuted,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                      ),
+                      elevation: 0,
+                    ),
+                    child: _isSubmitting
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.white,
+                            ),
+                          )
+                        : Text(
+                            'Pay ${_formatAmount(onlineTotal)} RWF',
+                            style: AppTypography.titleMedium.copyWith(
+                              color: AppColors.white,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                  ),
+                ),
+              ],
             ),
           ),
         );

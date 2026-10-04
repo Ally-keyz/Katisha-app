@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 class SoundService {
   AudioPlayer? _player;
+  bool _androidContextConfigured = false;
 
   /// Plays the click sound. Intended ONLY for the welcome-screen continue
   /// button, which is the single place in the app that keeps an audible cue.
@@ -42,11 +43,14 @@ class SoundService {
 
   Future<void> _playAsset(String path) async {
     try {
-      _player?.dispose();
-      _player = AudioPlayer();
+      // One player for the lifetime of the service. Creating a fresh
+      // `AudioPlayer` per tap spun up a new platform player and a new
+      // `AudioContext` (a cross-platform channel round-trip) every time.
+      final player = _player ??= AudioPlayer();
 
-      if (Platform.isAndroid) {
-        await _player!.setAudioContext(AudioContext(
+      if (Platform.isAndroid && !_androidContextConfigured) {
+        _androidContextConfigured = true;
+        await player.setAudioContext(AudioContext(
           android: AudioContextAndroid(
             isSpeakerphoneOn: true,
             usageType: AndroidUsageType.alarm,
@@ -56,7 +60,9 @@ class SoundService {
         ));
       }
 
-      await _player!.play(AssetSource(path), volume: 0.35);
+      // Restart cleanly if a previous cue is still playing.
+      await player.stop();
+      await player.play(AssetSource(path), volume: 0.35);
       dev.log('[SoundService] Audio started playing');
     } catch (e) {
       dev.log('[SoundService] Audio failed: $e');
@@ -71,5 +77,6 @@ class SoundService {
   void dispose() {
     _player?.dispose();
     _player = null;
+    _androidContextConfigured = false;
   }
 }

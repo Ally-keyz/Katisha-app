@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import '../../l10n/app_localizations.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_typography.dart';
@@ -53,13 +56,21 @@ class _CityAutocompleteFieldState extends State<CityAutocompleteField> {
   final _layerLink = LayerLink();
   OverlayEntry? _overlayEntry;
   List<String> _filteredOptions = [];
+  Timer? _blurTimer;
+
+  /// Mirrors `_controller.text.isNotEmpty` so the suffix button can be shown
+  /// from a plain field read instead of forcing a rebuild on every keystroke.
+  bool _hasText = false;
 
   @override
   void initState() {
     super.initState();
     if (widget.value != null) {
       _controller.text = widget.value!;
+      _hasText = widget.value!.isNotEmpty;
     }
+    // Keeps the clear (suffix) button in sync with the field contents.
+    _controller.addListener(_onTextChanged);
     _focusNode.addListener(_onFocusChanged);
   }
 
@@ -74,10 +85,19 @@ class _CityAutocompleteFieldState extends State<CityAutocompleteField> {
   @override
   void dispose() {
     _removeOverlay();
+    _controller.removeListener(_onTextChanged);
     _controller.dispose();
     _focusNode.removeListener(_onFocusChanged);
     _focusNode.dispose();
     super.dispose();
+  }
+
+  /// Only rebuilds when the clear button's visibility actually flips, so
+  /// ordinary typing (which routes through [onChanged]) doesn't repaint.
+  void _onTextChanged() {
+    final hasText = _controller.text.isNotEmpty;
+    if (hasText == _hasText) return;
+    setState(() => _hasText = hasText);
   }
 
   void _onFocusChanged() {
@@ -85,17 +105,17 @@ class _CityAutocompleteFieldState extends State<CityAutocompleteField> {
       _filteredOptions = cityOptions;
       _showOverlay();
     } else {
-      Future.delayed(const Duration(milliseconds: 200), () {
-        if (mounted && !_focusNode.hasFocus) {
-          if (_controller.text.isNotEmpty && widget.value == null) {
-            final match = _resolveBestMatch(_controller.text);
-            if (match != null) {
-              _controller.text = match;
-              widget.onChanged(match);
-            }
+      _blurTimer?.cancel();
+      _blurTimer = Timer(const Duration(milliseconds: 200), () {
+        if (!mounted || _focusNode.hasFocus) return;
+        if (_controller.text.isNotEmpty && widget.value == null) {
+          final match = _resolveBestMatch(_controller.text);
+          if (match != null) {
+            _controller.text = match;
+            widget.onChanged(match);
           }
-          _removeOverlay();
         }
+        _removeOverlay();
       });
     }
   }
@@ -121,15 +141,13 @@ class _CityAutocompleteFieldState extends State<CityAutocompleteField> {
   }
 
   void _filterOptions(String query) {
-    setState(() {
-      _filteredOptions = query.isEmpty
-          ? cityOptions
-          : cityOptions
-              .where((o) => o.toLowerCase().contains(query.toLowerCase()))
-              .toList();
-    });
-    _removeOverlay();
-    _showOverlay();
+    // Lower-case once: this runs on every keystroke and the list is scanned
+    // per candidate.
+    final q = query.toLowerCase();
+    _filteredOptions = q.isEmpty
+        ? cityOptions
+        : cityOptions.where((o) => o.toLowerCase().contains(q)).toList();
+    _refreshOverlay();
   }
 
   void _selectOption(String option) {
@@ -140,112 +158,133 @@ class _CityAutocompleteFieldState extends State<CityAutocompleteField> {
   }
 
   void _showOverlay() {
-    _removeOverlay();
+    // Already mounted — just repaint with the new option list.
+    if (_overlayEntry != null) {
+      _overlayEntry!.markNeedsBuild();
+      return;
+    }
     _overlayEntry = OverlayEntry(
-      builder: (context) => Positioned(
-        width: MediaQuery.of(context).size.width - AppSpacing.lg * 2,
-        child: CompositedTransformFollower(
-          link: _layerLink,
-          showWhenUnlinked: false,
-          offset: const Offset(0, 52),
-          child: Material(
-            elevation: 4,
-            borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-            child: Container(
-              constraints: const BoxConstraints(maxHeight: 180),
-              decoration: BoxDecoration(
-                color: AppColors.white,
-                borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                border: Border.all(color: AppColors.border),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.1),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: _filteredOptions.isEmpty
-                  ? Padding(
-                      padding: const EdgeInsets.all(AppSpacing.md),
-                      child: Text(
-                        'No locations found',
-                        style: AppTypography.bodyMedium.copyWith(
-                          color: AppColors.textMuted,
-                        ),
-                      ),
-                    )
-                  : ListView.builder(
-                      padding: EdgeInsets.zero,
-                      shrinkWrap: true,
-                      itemCount: _filteredOptions.length,
-                      itemBuilder: (context, index) {
-                        final option = _filteredOptions[index];
-                        final isSelected = option == widget.value;
-                        return InkWell(
-                          onTap: () => _selectOption(option),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: AppSpacing.md,
-                              vertical: 12,
-                            ),
-                            decoration: BoxDecoration(
-                              color: isSelected
-                                  ? AppColors.primaryLight
-                                  : null,
-                              border: Border(
-                                bottom: index < _filteredOptions.length - 1
-                                    ? const BorderSide(
-                                        color: Color(0xFFF8FAFC),
-                                        width: 0.5,
-                                      )
-                                    : BorderSide.none,
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.place_outlined,
-                                  size: 15,
-                                  color: isSelected
-                                      ? AppColors.primary
-                                      : AppColors.textMuted,
-                                ),
-                                const SizedBox(width: AppSpacing.sm),
-                                Expanded(
-                                  child: Text(
-                                    option,
-                                    style: AppTypography.bodyMedium.copyWith(
-                                      color: isSelected
-                                          ? AppColors.primary
-                                          : AppColors.text,
-                                      fontWeight: isSelected
-                                          ? FontWeight.w600
-                                          : FontWeight.w400,
-                                    ),
-                                  ),
-                                ),
-                                if (isSelected)
-                                  const Icon(
-                                    Icons.check,
-                                    size: 16,
-                                    color: AppColors.primary,
-                                  ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-            ),
-          ),
-        ),
-      ),
+      builder: _buildOverlayContent,
     );
     Overlay.of(context).insert(_overlayEntry!);
   }
 
+  /// Repaints the dropdown in place. Removing and re-inserting the entry on
+  /// every keystroke tore down and rebuilt the whole overlay subtree (and the
+  /// `ListView` with it) for each character typed; marking it dirty re-runs
+  /// only the entry's builder.
+  void _refreshOverlay() {
+    if (_overlayEntry == null) return;
+    _overlayEntry!.markNeedsBuild();
+  }
+
+  Widget _buildOverlayContent(BuildContext overlayContext) {
+    final options = _filteredOptions;
+    return Positioned(
+      width: MediaQuery.of(overlayContext).size.width - AppSpacing.lg * 2,
+      child: CompositedTransformFollower(
+        link: _layerLink,
+        showWhenUnlinked: false,
+        offset: const Offset(0, 52),
+        child: Material(
+          elevation: 4,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+          child: Container(
+            constraints: const BoxConstraints(maxHeight: 180),
+            decoration: BoxDecoration(
+              color: AppColors.white,
+              borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+              border: Border.all(color: AppColors.border),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.1),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: options.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.all(AppSpacing.md),
+                    child: Text(
+                      AppLocalizations.of(overlayContext)
+                          .translate('no_locations_found'),
+                      style: AppTypography.bodyMedium.copyWith(
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    key: ValueKey(options.length),
+                    padding: EdgeInsets.zero,
+                    shrinkWrap: true,
+                    itemCount: options.length,
+                    itemBuilder: (context, index) {
+                      final option = options[index];
+                      final isSelected = option == widget.value;
+                      return InkWell(
+                        onTap: () => _selectOption(option),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: AppSpacing.md,
+                            vertical: 12,
+                          ),
+                          decoration: BoxDecoration(
+                            color:
+                                isSelected ? AppColors.primaryLight : null,
+                            border: Border(
+                              bottom: index < options.length - 1
+                                  ? const BorderSide(
+                                      color: Color(0xFFF8FAFC),
+                                      width: 0.5,
+                                    )
+                                  : BorderSide.none,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.place_outlined,
+                                size: 15,
+                                color: isSelected
+                                    ? AppColors.primary
+                                    : AppColors.textMuted,
+                              ),
+                              const SizedBox(width: AppSpacing.sm),
+                              Expanded(
+                                child: Text(
+                                  option,
+                                  style: AppTypography.bodyMedium.copyWith(
+                                    color: isSelected
+                                        ? AppColors.primary
+                                        : AppColors.text,
+                                    fontWeight: isSelected
+                                        ? FontWeight.w600
+                                        : FontWeight.w400,
+                                  ),
+                                ),
+                              ),
+                              if (isSelected)
+                                const Icon(
+                                  Icons.check,
+                                  size: 16,
+                                  color: AppColors.primary,
+                                ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _removeOverlay() {
+    _blurTimer?.cancel();
+    _blurTimer = null;
     _overlayEntry?.remove();
     _overlayEntry = null;
   }
@@ -265,7 +304,7 @@ class _CityAutocompleteFieldState extends State<CityAutocompleteField> {
           hintText: widget.hint,
           hintStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
           prefixIcon: Icon(widget.icon, size: 18, color: AppColors.textMuted),
-          suffixIcon: _controller.text.isNotEmpty
+          suffixIcon: _hasText
               ? IconButton(
                   icon: const Icon(Icons.clear, size: 18),
                   onPressed: () {

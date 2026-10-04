@@ -15,6 +15,13 @@ final _bookingRepoProvider = Provider<BookingRepository>((ref) {
   return BookingRepository(ref.read(apiClientProvider));
 });
 
+/// Shared formatters. `NumberFormat`/`DateFormat` parse their pattern and
+/// resolve locale symbols in the constructor, and these are used inside list
+/// item builders, so allocating them per card per build was pure overhead.
+final _displayDateFormat = DateFormat('dd MMM yyyy');
+final _isoDateFormat = DateFormat('yyyy-MM-dd');
+final _moneyFormat = NumberFormat('#,##0');
+
 class RouteSearchResultsScreen extends ConsumerStatefulWidget {
   const RouteSearchResultsScreen({super.key});
 
@@ -73,12 +80,12 @@ class _RouteSearchResultsScreenState
     );
   }
 
-  String _formatDate(DateTime date) => DateFormat('dd MMM yyyy').format(date);
+  String _formatDate(DateTime date) => _displayDateFormat.format(date);
 
   void _navigateToBook(RouteModel route) {
     context.push('/book', extra: {
       'route': route,
-      'date': DateFormat('yyyy-MM-dd').format(_selectedDate),
+      'date': _isoDateFormat.format(_selectedDate),
     });
   }
 
@@ -395,7 +402,7 @@ class _RouteCard extends StatelessWidget {
             Row(
               children: [
                 Text(
-                  '${NumberFormat('#,##0').format(effectivePrice)} RWF',
+                  '${_moneyFormat.format(effectivePrice)} RWF',
                   style: AppTypography.titleLarge.copyWith(
                     color: AppColors.primary,
                   ),
@@ -403,7 +410,7 @@ class _RouteCard extends StatelessWidget {
                 if (hasDiscount) ...[
                   const SizedBox(width: AppSpacing.sm),
                   Text(
-                    '${NumberFormat('#,##0').format(route.price)} RWF',
+                    '${_moneyFormat.format(route.price)} RWF',
                     style: AppTypography.bodySmall.copyWith(
                       color: AppColors.textMuted,
                       decoration: TextDecoration.lineThrough,
