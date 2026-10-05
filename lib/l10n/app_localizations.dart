@@ -96,19 +96,9 @@ const appLocalizationDelegates = <LocalizationsDelegate<dynamic>>[
   _AdaptiveCupertinoLocalizations(),
 ];
 
-const _supportedLanguageCodes = {'en', 'rw', 'sw', 'fr'};
-
-/// Returns the app language that matches the device/OS language, falling back
-/// to English when the device language is unsupported.
-Locale systemLocale() {
-  final binding = WidgetsBinding.instance;
-  for (final locale in binding.platformDispatcher.locales) {
-    if (_supportedLanguageCodes.contains(locale.languageCode)) {
-      return Locale(locale.languageCode);
-    }
-  }
-  return const Locale('en');
-}
+/// English is the default language of the app. Only a previously stored
+/// user choice overrides this (handled by [LanguagePreference.getLocale]).
+Locale systemLocale() => const Locale('en');
 
 class LanguagePreference {
   static const _key = 'vdk_language';
