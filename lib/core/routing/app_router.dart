@@ -223,46 +223,70 @@ Widget _buildBottomNav({
   // Resolved once: this runs on every shell rebuild, and each destination used
   // to do its own Localizations lookup.
   final l10n = AppLocalizations.of(context);
+  // The promoter screen is dark, so only on that tab does the nav go dark.
+  final dark = GoRouterState.of(context).matchedLocation == _promoterPath;
 
   return Container(
-    decoration: const BoxDecoration(
-      color: Colors.black,
-      border: Border(top: BorderSide(color: Color(0xFF262626), width: 0.5)),
-    ),
-    child: Theme(
-      data: Theme.of(context).copyWith(
-        navigationBarTheme: NavigationBarThemeData(
-          iconTheme: WidgetStateProperty.resolveWith(
-            (states) => IconThemeData(
-              color: states.contains(WidgetState.selected)
-                  ? const Color(0xFF3B82F6)
-                  : const Color(0xFF9CA3AF),
-            ),
-          ),
+    decoration: BoxDecoration(
+      color: dark ? Colors.black : Colors.white,
+      border: Border(
+        top: BorderSide(
+          color: dark ? const Color(0xFF262626) : const Color(0xFFE2E8F0),
+          width: 0.5,
         ),
       ),
-      child: NavigationBar(
+    ),
+    child: dark
+        ? Theme(
+            data: Theme.of(context).copyWith(
+              navigationBarTheme: NavigationBarThemeData(
+                iconTheme: WidgetStateProperty.resolveWith(
+                  (states) => IconThemeData(
+                    color: states.contains(WidgetState.selected)
+                        ? const Color(0xFF3B82F6)
+                        : const Color(0xFF9CA3AF),
+                  ),
+                ),
+              ),
+            ),
+            child: _buildNavBar(context, currentIndex, paths, l10n, dark, badgeCounts),
+          )
+        : _buildNavBar(context, currentIndex, paths, l10n, dark, badgeCounts),
+  );
+}
+
+Widget _buildNavBar(
+  BuildContext context,
+  int currentIndex,
+  List<String> paths,
+  dynamic l10n,
+  bool dark,
+  dynamic badgeCounts,
+) {
+  return NavigationBar(
       selectedIndex: currentIndex,
       onDestinationSelected: (index) => context.go(paths[index]),
-      backgroundColor: Colors.black,
+      backgroundColor: dark ? Colors.black : Colors.white,
       elevation: 0,
       labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-      indicatorColor: const Color(0x332563EB),
+      indicatorColor: dark ? const Color(0x332563EB) : const Color(0xFFDBEAFE),
       indicatorShape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(4),
       ),
       surfaceTintColor: Colors.transparent,
-      labelTextStyle: WidgetStateProperty.resolveWith(
-        (states) => TextStyle(
-          color: states.contains(WidgetState.selected)
-              ? const Color(0xFF3B82F6)
-              : const Color(0xFF9CA3AF),
-          fontSize: 12,
-          fontWeight: states.contains(WidgetState.selected)
-              ? FontWeight.w600
-              : FontWeight.w400,
-        ),
-      ),
+      labelTextStyle: dark
+          ? WidgetStateProperty.resolveWith(
+              (states) => TextStyle(
+                color: states.contains(WidgetState.selected)
+                    ? const Color(0xFF3B82F6)
+                    : const Color(0xFF9CA3AF),
+                fontSize: 12,
+                fontWeight: states.contains(WidgetState.selected)
+                    ? FontWeight.w600
+                    : FontWeight.w400,
+              ),
+            )
+          : null,
       destinations: [
         NavigationDestination(
           icon: const Icon(Icons.home_outlined),
@@ -311,8 +335,6 @@ Widget _buildBottomNav({
             label: l10n.translate('nav_promoter'),
           ),
       ],
-      ),
-    ),
   );
 }
 
