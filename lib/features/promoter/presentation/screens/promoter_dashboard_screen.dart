@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shimmer/shimmer.dart';
 
+import '../../../../core/network/socket_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -35,11 +38,36 @@ class _PromoterDashboardScreenState
   bool _loading = true;
   bool _requestingPayout = false;
   bool _copied = false;
+  StreamSubscription<SocketEvent>? _clickSub;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+    _clickSub = ref.read(socketServiceProvider).onEvent.listen((event) {
+      if (event.name == 'promoter:link-click' && mounted) {
+        setState(() {
+          if (_stats != null) {
+            _stats = PromoterStats(
+              earnings: _stats!.earnings,
+              referrals: _stats!.referrals,
+              thisMonth: _stats!.thisMonth,
+              trend: _stats!.trend,
+              recentCommissions: _stats!.recentCommissions,
+              minPayout: _stats!.minPayout,
+              canRequestPayout: _stats!.canRequestPayout,
+              linkClicks: _stats!.linkClicks + 1,
+            );
+          }
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _clickSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _load() async {
