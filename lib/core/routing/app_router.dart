@@ -225,23 +225,44 @@ Widget _buildBottomNav({
   final l10n = AppLocalizations.of(context);
 
   return Container(
-    // Flat white bar: no shadow, and the border is the only separator so the
-    // content behind it never bleeds through.
     decoration: const BoxDecoration(
-      color: Colors.white,
-      border: Border(top: BorderSide(color: Color(0xFFE2E8F0), width: 0.5)),
+      color: Colors.black,
+      border: Border(top: BorderSide(color: Color(0xFF262626), width: 0.5)),
     ),
-    child: NavigationBar(
+    child: Theme(
+      data: Theme.of(context).copyWith(
+        navigationBarTheme: NavigationBarThemeData(
+          iconTheme: WidgetStateProperty.resolveWith(
+            (states) => IconThemeData(
+              color: states.contains(WidgetState.selected)
+                  ? const Color(0xFF3B82F6)
+                  : const Color(0xFF9CA3AF),
+            ),
+          ),
+        ),
+      ),
+      child: NavigationBar(
       selectedIndex: currentIndex,
       onDestinationSelected: (index) => context.go(paths[index]),
-      backgroundColor: Colors.white,
+      backgroundColor: Colors.black,
       elevation: 0,
       labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-      indicatorColor: const Color(0xFFDBEAFE),
+      indicatorColor: const Color(0x332563EB),
       indicatorShape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(4),
       ),
       surfaceTintColor: Colors.transparent,
+      labelTextStyle: WidgetStateProperty.resolveWith(
+        (states) => TextStyle(
+          color: states.contains(WidgetState.selected)
+              ? const Color(0xFF3B82F6)
+              : const Color(0xFF9CA3AF),
+          fontSize: 12,
+          fontWeight: states.contains(WidgetState.selected)
+              ? FontWeight.w600
+              : FontWeight.w400,
+        ),
+      ),
       destinations: [
         NavigationDestination(
           icon: const Icon(Icons.home_outlined),
@@ -290,6 +311,7 @@ Widget _buildBottomNav({
             label: l10n.translate('nav_promoter'),
           ),
       ],
+      ),
     ),
   );
 }

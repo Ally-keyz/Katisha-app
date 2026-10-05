@@ -202,6 +202,7 @@ class PromoterStats {
   final List<PromoterCommission> recentCommissions;
   final double minPayout;
   final bool canRequestPayout;
+  final int linkClicks;
 
   const PromoterStats({
     required this.earnings,
@@ -211,6 +212,7 @@ class PromoterStats {
     required this.recentCommissions,
     required this.minPayout,
     required this.canRequestPayout,
+    this.linkClicks = 0,
   });
 
   factory PromoterStats.fromJson(Map<String, dynamic> json) {
@@ -234,6 +236,7 @@ class PromoterStats {
           : const [],
       minPayout: _double(json['minPayout'], fallback: 1),
       canRequestPayout: json['canRequestPayout'] == true,
+      linkClicks: _int(json['linkClicks']),
     );
   }
 }

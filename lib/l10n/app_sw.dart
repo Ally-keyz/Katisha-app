@@ -459,5 +459,18 @@ class AppSw {
     'month_oct_abbr': 'Okt',
     'month_nov_abbr': 'Nov',
     'month_dec_abbr': 'Des',
+    'promoter_title': 'Katisha Promoter',
+    'promoter_link_opens': 'Mafunguzi %d ya kiungo',
+    'promoter_history': 'Historia',
+    'promoter_copy_link': 'Nakili kiungo',
+    'promoter_copied': 'Imenakiliwa ✓',
+    'promoter_share': 'Shiriki',
+    'promoter_share_text': 'Jiunge nami kwenye Katisha na upate tiketi: %s',
+    'promoter_link_copied': 'Kiungo kimenakiliwa',
+    'promoter_share_hint': 'Shiriki kiungo chako kuanza kupata',
+    'promoter_referrals': 'Mapendekezo',
+    'promoter_referral_link': 'Kiungo cha marejeleo',
+    'promoter_status': 'Hali',
+    'promoter_pending': 'Inasubiri',
   };
 }

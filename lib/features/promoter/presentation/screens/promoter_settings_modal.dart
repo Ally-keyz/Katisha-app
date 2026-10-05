@@ -243,8 +243,15 @@ class _PayoutTabState extends ConsumerState<_PayoutTab> {
               ),
               const SizedBox(height: AppSpacing.sm),
               _infoRow(
-                l10n.translate('promoter_your_code'),
-                profile.promoterCode ?? '-',
+                l10n.translate('promoter_status'),
+                profile.status,
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              _infoRow(
+                l10n.translate('promoter_referral_link'),
+                profile.promoterCode != null
+                    ? 'https://katisha.today/?ref=${profile.promoterCode}'
+                    : '-',
               ),
               const SizedBox(height: AppSpacing.sm),
               _infoRow(
@@ -375,6 +382,8 @@ class _PayoutTabState extends ConsumerState<_PayoutTab> {
               fontWeight: FontWeight.w600,
             ),
             textAlign: TextAlign.right,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
           ),
         ),
       ],

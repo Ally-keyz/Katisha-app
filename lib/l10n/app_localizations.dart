@@ -104,7 +104,6 @@ const _supportedLanguageCodes = {'en', 'rw', 'sw', 'fr'};
 /// user preference is stored — the app never starts in English by default.
 Locale systemLocale() {
   final binding = WidgetsBinding.instance;
-  if (binding == null) return const Locale('rw');
   for (final locale in binding.platformDispatcher.locales) {
     if (_supportedLanguageCodes.contains(locale.languageCode)) {
       return locale.languageCode == 'en'

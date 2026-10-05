@@ -456,5 +456,18 @@ class AppEn {
     'month_oct_abbr': 'Oct',
     'month_nov_abbr': 'Nov',
     'month_dec_abbr': 'Dec',
+    'promoter_title': 'Katisha Promoter',
+    'promoter_link_opens': '%d link opens',
+    'promoter_history': 'History',
+    'promoter_copy_link': 'Copy link',
+    'promoter_copied': 'Copied ✓',
+    'promoter_share': 'Share',
+    'promoter_share_text': 'Join me on Katisha and get your tickets: %s',
+    'promoter_link_copied': 'Link copied',
+    'promoter_share_hint': 'Share your link to start earning',
+    'promoter_referrals': 'Referrals',
+    'promoter_referral_link': 'Referral link',
+    'promoter_status': 'Status',
+    'promoter_pending': 'Pending',
   };
 }

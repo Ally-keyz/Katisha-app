@@ -459,5 +459,18 @@ class AppFr {
     'month_oct_abbr': 'oct.',
     'month_nov_abbr': 'nov.',
     'month_dec_abbr': 'dÃ©c.',
+    'promoter_title': 'Katisha Promoter',
+    'promoter_link_opens': '%d ouvertures du lien',
+    'promoter_history': 'Historique',
+    'promoter_copy_link': 'Copier le lien',
+    'promoter_copied': 'Copié ✓',
+    'promoter_share': 'Partager',
+    'promoter_share_text': 'Rejoins-moi sur Katisha pour obtenir tes billets : %s',
+    'promoter_link_copied': 'Lien copié',
+    'promoter_share_hint': 'Partagez votre lien pour commencer à gagner',
+    'promoter_referrals': 'Parrainages',
+    'promoter_referral_link': 'Lien de parrainage',
+    'promoter_status': 'Statut',
+    'promoter_pending': 'En attente',
   };
 }

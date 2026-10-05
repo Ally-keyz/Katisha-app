@@ -459,5 +459,18 @@ class AppRw {
     'month_oct_abbr': 'Okt',
     'month_nov_abbr': 'Nov',
     'month_dec_abbr': 'Dek',
+    'promoter_title': 'Katisha Promoter',
+    'promoter_link_opens': '%d inshuro link yanyu yafunguwe',
+    'promoter_history': 'Amateka',
+    'promoter_copy_link': 'Koporora link',
+    'promoter_copied': 'Yakopiwe ✓',
+    'promoter_share': 'Sangira',
+    'promoter_share_text': 'Injira muri Katisha unahawe tiketi: %s',
+    'promoter_link_copied': 'Link yakopiwe',
+    'promoter_share_hint': 'Sangira link yanyu kugirango utangire gukinjiza',
+    'promoter_referrals': 'Abakoresheje link',
+    'promoter_referral_link': 'Link yanyu',
+    'promoter_status': 'Imiterere',
+    'promoter_pending': 'Bitegerejwe',
   };
 }
