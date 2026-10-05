@@ -254,6 +254,12 @@ class PromoterReferral {
   final double lifetimeValue;
   final DateTime? createdAt;
 
+  /// Commission this promoter earned from this referral.
+  final double earned;
+
+  /// True when the earnings from this referral have already been paid out.
+  final bool paidOut;
+
   const PromoterReferral({
     required this.id,
     this.customerName,
@@ -261,10 +267,15 @@ class PromoterReferral {
     required this.status,
     required this.lifetimeValue,
     this.createdAt,
+    this.earned = 0,
+    this.paidOut = false,
   });
 
   factory PromoterReferral.fromJson(Map<String, dynamic> json) {
     final customer = _map(json['customer']);
+    final payoutStatus = _nullableString(json['payoutStatus']) ??
+        _nullableString(json['commissionStatus']) ??
+        _nullableString(json['status']);
     return PromoterReferral(
       id: _string(json['id']),
       customerName: _nullableString(customer?['name']),
@@ -272,6 +283,13 @@ class PromoterReferral {
       status: _string(json['status']),
       lifetimeValue: _double(json['lifetimeValue']),
       createdAt: _date(json['createdAt']),
+      earned: _double(json['earned']) > 0
+          ? _double(json['earned'])
+          : _double(json['commissionEarned']) > 0
+              ? _double(json['commissionEarned'])
+              : _double(json['totalCommission']),
+      paidOut: json['paidOut'] == true ||
+          (payoutStatus ?? '').toLowerCase() == 'paid',
     );
   }
 

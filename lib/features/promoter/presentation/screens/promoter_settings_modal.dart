@@ -79,25 +79,24 @@ class _PromoterSettingsModalState extends ConsumerState<PromoterSettingsModal>
     return KatishaModal(
       title: l10n.translate('promoter_settings_title'),
       bodyScrollable: false,
+      dark: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           TabBar(
             controller: _tabController,
-            labelColor: AppColors.primary,
-            unselectedLabelColor: AppColors.textSub,
-            indicatorColor: AppColors.primary,
+            labelColor: Colors.white,
+            unselectedLabelColor: const Color(0xFF9CA3AF),
+            indicatorColor: const Color(0xFF3B82F6),
             indicatorSize: TabBarIndicatorSize.tab,
-            dividerColor: AppColors.border,
-            labelStyle: AppTypography.titleSmall.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+            dividerColor: const Color(0xFF27272A),
+            labelStyle: AppTypography.titleSmall.copyWith(fontWeight: FontWeight.w700, color: Colors.white),
             tabs: [
               Tab(text: l10n.translate('promoter_tab_payout')),
               Tab(text: l10n.translate('promoter_tab_security')),
             ],
           ),
-          const Divider(height: 1, color: AppColors.border),
+          const Divider(height: 1, color: Color(0xFF27272A)),
           Expanded(
             child: TabBarView(
               controller: _tabController,
@@ -261,15 +260,13 @@ class _PayoutTabState extends ConsumerState<_PayoutTab> {
                     : '${profile.payoutPhone} (${l10n.translate("promoter_using_account_phone")})',
               ),
               const SizedBox(height: AppSpacing.lg),
-              Divider(color: AppColors.border),
+              Divider(color: Color(0xFF27272A)),
               const SizedBox(height: AppSpacing.lg),
             ],
 
             Text(
               l10n.translate('promoter_payout_phone'),
-              style: AppTypography.titleSmall.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+              style: AppTypography.titleSmall.copyWith(fontWeight: FontWeight.w700, color: Colors.white),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
@@ -281,13 +278,13 @@ class _PayoutTabState extends ConsumerState<_PayoutTab> {
               controller: _phoneController,
               keyboardType: TextInputType.phone,
               enabled: !suspended && !_busy,
-              style: AppTypography.bodyLarge,
+              style: AppTypography.bodyLarge.copyWith(color: Colors.white),
               inputFormatters: [_phoneFormatter],
               decoration: InputDecoration(
                 hintText: '0788 000 007',
                 prefixIcon: const Icon(Icons.phone_outlined, size: 20),
                 filled: true,
-                fillColor: AppColors.white,
+                fillColor: const Color(0xFF1F2937),
                 contentPadding: const EdgeInsets.symmetric(
                   horizontal: AppSpacing.md,
                   vertical: AppSpacing.md,
@@ -380,6 +377,7 @@ class _PayoutTabState extends ConsumerState<_PayoutTab> {
             value,
             style: AppTypography.bodyMedium.copyWith(
               fontWeight: FontWeight.w600,
+              color: Colors.white,
             ),
             textAlign: TextAlign.right,
             maxLines: 2,
@@ -394,7 +392,7 @@ class _PayoutTabState extends ConsumerState<_PayoutTab> {
     return OutlineInputBorder(
       borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
       borderSide: BorderSide(
-        color: focused ? AppColors.primary : AppColors.border,
+        color: focused ? AppColors.primary : const Color(0xFF3F3F46),
         width: focused ? 2 : 1,
       ),
     );
@@ -479,9 +477,7 @@ class _SecurityTabState extends ConsumerState<_SecurityTab> {
           children: [
             Text(
               l10n.translate('promoter_change_password'),
-              style: AppTypography.titleSmall.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
+              style: AppTypography.titleSmall.copyWith(fontWeight: FontWeight.w700, color: Colors.white),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
@@ -546,7 +542,7 @@ class _SecurityTabState extends ConsumerState<_SecurityTab> {
             ),
 
             const SizedBox(height: AppSpacing.lg),
-            Divider(color: AppColors.border),
+            Divider(color: Color(0xFF27272A)),
             const SizedBox(height: AppSpacing.md),
             OutlinedButton.icon(
               onPressed: () async {
@@ -598,11 +594,11 @@ class _SecurityTabState extends ConsumerState<_SecurityTab> {
           controller: controller,
           obscureText: true,
           enabled: !_busy,
-          style: AppTypography.bodyLarge,
+          style: AppTypography.bodyLarge.copyWith(color: Colors.white),
           decoration: InputDecoration(
             prefixIcon: const Icon(Icons.lock_outline, size: 20),
             filled: true,
-            fillColor: AppColors.white,
+            fillColor: const Color(0xFF1F2937),
             contentPadding: const EdgeInsets.symmetric(
               horizontal: AppSpacing.md,
               vertical: AppSpacing.md,
@@ -625,9 +621,11 @@ class _SecurityTabState extends ConsumerState<_SecurityTab> {
     return OutlineInputBorder(
       borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
       borderSide: BorderSide(
-        color: focused ? AppColors.primary : AppColors.border,
+        color: focused ? AppColors.primary : const Color(0xFF3F3F46),
         width: focused ? 2 : 1,
       ),
     );
   }
 }
+
+

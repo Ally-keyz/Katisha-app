@@ -8,8 +8,7 @@ import 'package:lottie/lottie.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/socket_service.dart';
 import '../../../../core/error/failures.dart';
-import '../../../../core/platform/platform_providers.dart'
-    hide socketServiceProvider;
+import '../../../../core/platform/platform_providers.dart';
 import '../../../../core/platform/ticket_sync_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
@@ -1165,13 +1164,31 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       ],
     );
 
+    // The booking page is white, so the status-bar icons (clock, battery,
+    // signal) must be dark. No AppBar provides an overlay style here, and a
+    // dark screen elsewhere in the stack can otherwise leave light icons
+    // behind, so set it explicitly.
+    const overlayStyle = SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+      statusBarBrightness: Brightness.light,
+      systemNavigationBarColor: Colors.white,
+      systemNavigationBarIconBrightness: Brightness.dark,
+    );
+
     if (widget.embedded) {
-      return SafeArea(child: content);
+      return AnnotatedRegion<SystemUiOverlayStyle>(
+        value: overlayStyle,
+        child: SafeArea(child: content),
+      );
     }
 
     return Scaffold(
       backgroundColor: AppColors.white,
-      body: SafeArea(child: content),
+      body: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: overlayStyle,
+        child: SafeArea(child: content),
+      ),
     );
   }
 
@@ -1336,19 +1353,19 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
         ),
         const SizedBox(height: AppSpacing.xl),
-        _buildLabel('ORIGIN'),
+        _buildLabel(l10n.translate('origin').toUpperCase()),
         const SizedBox(height: AppSpacing.xs),
         _buildLocationSelector(
-          label: 'origin city',
+          label: l10n.translate('origin'),
           icon: Icons.location_on_outlined,
           value: _origin,
           onTap: _openOriginPicker,
         ),
         const SizedBox(height: AppSpacing.lg),
-        _buildLabel('DESTINATION'),
+        _buildLabel(l10n.translate('destination').toUpperCase()),
         const SizedBox(height: AppSpacing.xs),
         _buildLocationSelector(
-          label: 'destination city',
+          label: l10n.translate('destination'),
           icon: Icons.location_on_outlined,
           value: _destination,
           onTap: _openDestinationPicker,
@@ -1772,11 +1789,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                           )
                         : ListView.separated(
                             padding: const EdgeInsets.symmetric(
-                                vertical: AppSpacing.xs),
+                                vertical: AppSpacing.sm),
                             itemCount: filtered.length,
-                            separatorBuilder: (_, _) => const Divider(
-                              height: 1,
-                              color: AppColors.border,
+                            separatorBuilder: (_, _) => Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: AppSpacing.md),
+                              child: const Divider(
+                                height: AppSpacing.sm,
+                                color: AppColors.border,
+                              ),
                             ),
                             itemBuilder: (context, index) => _buildAgencyRow(
                                 filtered[index], ctx, setSheetState),
@@ -1833,7 +1854,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       child: Container(
         color: isSelected ? AppColors.primaryLight : null,
         padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md, vertical: AppSpacing.sm),
+            horizontal: AppSpacing.md, vertical: AppSpacing.md),
         child: Row(
           children: [
             Container(
@@ -3080,7 +3101,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final l10n = AppLocalizations.of(context);
     return Scaffold(
       backgroundColor: AppColors.white,
-      body: SafeArea(
+      body: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: const SystemUiOverlayStyle(
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+        ),
+        child: SafeArea(
         child: Center(
           child: Padding(
             padding: const EdgeInsets.all(AppSpacing.xl),
@@ -3169,6 +3195,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 ],
               ],
             ),
+          ),
           ),
         ),
       ),
@@ -3321,15 +3348,20 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
     return Scaffold(
       backgroundColor: AppColors.white,
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.lg,
-              vertical: AppSpacing.xxl,
-            ),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 380),
+      body: AnnotatedRegion<SystemUiOverlayStyle>(
+        value: const SystemUiOverlayStyle(
+          statusBarIconBrightness: Brightness.dark,
+          statusBarBrightness: Brightness.light,
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg,
+                vertical: AppSpacing.xxl,
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 380),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -3425,6 +3457,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 ],
               ),
             ),
+          ),
           ),
         ),
       ),

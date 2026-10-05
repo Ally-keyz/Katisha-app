@@ -35,10 +35,6 @@ final soundServiceProvider = Provider<SoundService>((ref) {
   return service;
 });
 
-final socketServiceProvider = Provider<SocketService>((ref) {
-  return _NoOpSocketService();
-});
-
 final printServiceProvider = Provider<PrintService>((ref) {
   return PrintServiceImpl();
 });
@@ -125,30 +121,4 @@ class _NoOpNotificationService implements NotificationService {
   @override
   Stream<NotificationPayload> get onForegroundAlert =>
       const Stream.empty();
-}
-
-class _NoOpSocketService implements SocketService {
-  @override
-  Future<void> connect(String token) async {}
-  @override
-  void disconnect() {}
-  @override
-  bool get isConnected => false;
-  @override
-  Stream<SocketEvent> get onEvent => const Stream.empty();
-  @override
-  Stream<Map<String, dynamic>> get onBookingStatusChanged =>
-      const Stream.empty();
-  @override
-  Stream<Map<String, dynamic>> get onPaymentConfirmed =>
-      const Stream.empty();
-  @override
-  Stream<Map<String, dynamic>> get onNewBooking =>
-      const Stream.empty();
-  @override
-  void emit(String event, dynamic data) {}
-  @override
-  void joinRoom(String room) {}
-  @override
-  void leaveRoom(String room) {}
 }

@@ -468,9 +468,12 @@ class AppSw {
     'promoter_share_text': 'Jiunge nami kwenye Katisha na upate tiketi: %s',
     'promoter_link_copied': 'Kiungo kimenakiliwa',
     'promoter_share_hint': 'Shiriki kiungo chako kuanza kupata',
+    'amount_earned': 'Kiasi kilichopatikana',
+    'go_to_login': 'Ingia kuingia',
     'promoter_referrals': 'Mapendekezo',
     'promoter_referral_link': 'Kiungo cha marejeleo',
     'promoter_status': 'Hali',
     'promoter_pending': 'Inasubiri',
   };
 }
+

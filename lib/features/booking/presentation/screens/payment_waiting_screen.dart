@@ -8,6 +8,7 @@ import 'package:lottie/lottie.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/error/failures.dart';
 import '../../../../core/platform/platform_providers.dart';
+import '../../../../core/network/socket_service.dart';
 import '../../../../core/platform/sound_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';

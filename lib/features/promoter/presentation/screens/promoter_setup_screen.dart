@@ -10,6 +10,7 @@ import '../../../../core/widgets/katisha_app_bar.dart';
 import '../../../../core/widgets/katisha_modal.dart';
 import '../../../../l10n/app_localizations.dart';
 import '../../../auth/application/auth_controller.dart';
+import '../../../auth/presentation/screens/sign_in_screen.dart';
 import '../../application/promoter_providers.dart';
 import '../../data/models/promoter_models.dart';
 
@@ -219,6 +220,19 @@ class _PromoterSetupScreenState extends ConsumerState<PromoterSetupScreen> {
             child: TextButton(
               onPressed: () => context.go('/home'),
               child: Text(l10n.translate('back_to_booking')),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Center(
+            child: TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const SignInScreen(
+                    title: 'promoter_gate_signin_title',
+                  ),
+                ),
+              ),
+              child: Text(l10n.translate('go_to_login')),
             ),
           ),
         ],

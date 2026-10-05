@@ -223,18 +223,19 @@ Widget _buildBottomNav({
   // Resolved once: this runs on every shell rebuild, and each destination used
   // to do its own Localizations lookup.
   final l10n = AppLocalizations.of(context);
-  // The promoter screen is dark, so only on that tab does the nav go dark.
-  final dark = GoRouterState.of(context).matchedLocation == _promoterPath;
+  // The promoter dashboard is dark, so only on that tab does the nav go dark.
+  // Setup, sign-in and signed-out states share the same /promoter route, so
+  // also require a signed-in promoter before darkening.
+  final auth = ref.watch(authControllerProvider);
+  final isPromoterDashboard = GoRouterState.of(context).matchedLocation ==
+          _promoterPath &&
+      auth is AuthSignedIn &&
+      auth.user.isPromoter;
+  final dark = isPromoterDashboard;
 
   return Container(
     decoration: BoxDecoration(
       color: dark ? Colors.black : Colors.white,
-      border: Border(
-        top: BorderSide(
-          color: dark ? const Color(0xFF262626) : const Color(0xFFE2E8F0),
-          width: 0.5,
-        ),
-      ),
     ),
     child: dark
         ? Theme(

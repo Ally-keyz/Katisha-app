@@ -465,9 +465,12 @@ class AppEn {
     'promoter_share_text': 'Join me on Katisha and get your tickets: %s',
     'promoter_link_copied': 'Link copied',
     'promoter_share_hint': 'Share your link to start earning',
+    'amount_earned': 'Amount earned',
+    'go_to_login': 'Go to login',
     'promoter_referrals': 'Referrals',
     'promoter_referral_link': 'Referral link',
     'promoter_status': 'Status',
     'promoter_pending': 'Pending',
   };
 }
+

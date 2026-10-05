@@ -194,6 +194,7 @@ class _PromoterDashboardScreenState
   Future<void> _openSettings() async {
     await showKatishaModal<void>(
       context: context,
+      dark: true,
       builder: (_) => const PromoterSettingsModal(),
     );
     ref.read(promoterDataVersionProvider.notifier).state++;
@@ -354,7 +355,9 @@ class _PromoterDashboardScreenState
                             child: FittedBox(
                               fit: BoxFit.scaleDown,
                               child: Text(
-                                formatMoney(stats?.earnings.lifetimeEarned ?? 0),
+                                formatMoney(stats?.thisMonth.total ?? 0),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   fontSize: 52,
                                   fontWeight: FontWeight.w500,
@@ -662,7 +665,6 @@ class _ReferralsSheetState extends State<_ReferralsSheet> {
                               ),
                               itemBuilder: (_, i) {
                                 final r = _referrals![i];
-                                final converted = r.isConverted;
                                 return Padding(
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 12,
@@ -683,6 +685,14 @@ class _ReferralsSheetState extends State<_ReferralsSheet> {
                                             ),
                                             const SizedBox(height: 2),
                                             Text(
+                                              formatMoney(r.earned),
+                                              style: const TextStyle(
+                                                color: _mutedGrey,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Text(
                                               r.createdAt != null
                                                   ? r.createdAt!
                                                       .toLocal()
@@ -698,13 +708,6 @@ class _ReferralsSheetState extends State<_ReferralsSheet> {
                                           ],
                                         ),
                                       ),
-                                      Text(
-                                        formatRwf(r.lifetimeValue),
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
                                       const SizedBox(width: 8),
                                       Container(
                                         padding: const EdgeInsets.symmetric(
@@ -712,7 +715,7 @@ class _ReferralsSheetState extends State<_ReferralsSheet> {
                                           vertical: 3,
                                         ),
                                         decoration: BoxDecoration(
-                                          color: converted
+                                          color: r.paidOut
                                               ? const Color(0xFF059669)
                                                   .withValues(alpha: 0.2)
                                               : const Color(0xFFF59E0B)
@@ -721,19 +724,33 @@ class _ReferralsSheetState extends State<_ReferralsSheet> {
                                         ),
                                         child: Text(
                                           l10n.translate(
-                                            converted
-                                                ? 'promoter_converted'
-                                                : 'promoter_pending',
+                                            r.paidOut
+                                                ? 'status_paid'
+                                                : 'status_pending',
                                           ),
                                           style: TextStyle(
                                             fontSize: 11,
                                             fontWeight: FontWeight.w600,
-                                            color: converted
+                                            color: r.paidOut
                                                 ? const Color(0xFF34D399)
                                                 : const Color(0xFFFBBF24),
                                           ),
                                         ),
                                       ),
+                                      if (!r.paidOut && widget.onWithdraw != null)
+                                        Padding(
+                                          padding: const EdgeInsets.only(left: 8),
+                                          child: TextButton(
+                                            onPressed: _withdraw,
+                                            child: Text(
+                                              l10n.translate('promoter_withdraw'),
+                                              style: const TextStyle(
+                                                color: _accentBlue,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
                                     ],
                                   ),
                                 );

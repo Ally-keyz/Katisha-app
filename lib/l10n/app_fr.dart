@@ -468,9 +468,12 @@ class AppFr {
     'promoter_share_text': 'Rejoins-moi sur Katisha pour obtenir tes billets : %s',
     'promoter_link_copied': 'Lien copié',
     'promoter_share_hint': 'Partagez votre lien pour commencer à gagner',
+    'amount_earned': 'Montant gagné',
+    'go_to_login': 'Se connecter',
     'promoter_referrals': 'Parrainages',
     'promoter_referral_link': 'Lien de parrainage',
     'promoter_status': 'Statut',
     'promoter_pending': 'En attente',
   };
 }
+

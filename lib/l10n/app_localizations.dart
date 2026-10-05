@@ -99,19 +99,15 @@ const appLocalizationDelegates = <LocalizationsDelegate<dynamic>>[
 const _supportedLanguageCodes = {'en', 'rw', 'sw', 'fr'};
 
 /// Returns the app language that matches the device/OS language, falling back
-/// to Kinyarwanda (the app's primary market language) when the device is
-/// English or another unsupported language. Used on first launch before any
-/// user preference is stored — the app never starts in English by default.
+/// to English when the device language is unsupported.
 Locale systemLocale() {
   final binding = WidgetsBinding.instance;
   for (final locale in binding.platformDispatcher.locales) {
     if (_supportedLanguageCodes.contains(locale.languageCode)) {
-      return locale.languageCode == 'en'
-          ? const Locale('rw')
-          : Locale(locale.languageCode);
+      return Locale(locale.languageCode);
     }
   }
-  return const Locale('rw');
+  return const Locale('en');
 }
 
 class LanguagePreference {
