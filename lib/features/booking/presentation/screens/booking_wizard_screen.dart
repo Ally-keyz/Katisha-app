@@ -1885,6 +1885,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Flexible(
                         child: Text(
@@ -1893,16 +1894,19 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                             fontWeight:
                                 isSelected ? FontWeight.w700 : FontWeight.w600,
                           ),
-                          maxLines: 1,
+                          maxLines: 2,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       if (hasPromo) ...[
                         const SizedBox(width: 4),
-                        const Icon(
-                          Icons.star,
-                          size: 13,
-                          color: Color(0xFFF59E0B),
+                        const Padding(
+                          padding: EdgeInsets.only(top: 2),
+                          child: Icon(
+                            Icons.star,
+                            size: 13,
+                            color: Color(0xFFF59E0B),
+                          ),
                         ),
                       ],
                     ],
@@ -1955,12 +1959,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   ),
               ],
             ),
-            const SizedBox(width: AppSpacing.sm),
-            Icon(
-              isSelected ? Icons.check_circle : Icons.radio_button_unchecked,
-              size: 20,
-              color: isSelected ? AppColors.primary : AppColors.textMuted,
-            ),
+            if (isSelected) ...[
+              const SizedBox(width: AppSpacing.sm),
+              const Icon(
+                Icons.check_circle,
+                size: 20,
+                color: AppColors.primary,
+              ),
+            ],
           ],
         ),
       ),
@@ -2797,6 +2803,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Breathing room below the sheet header so the summary card
+                // doesn't sit flush against the divider.
+                const SizedBox(height: AppSpacing.lg),
                 // Pricing breakdown
                 Container(
                   width: double.infinity,
