@@ -42,12 +42,53 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
   bool _loading = true;
   String? _error;
 
+  /// Booking id requested via the `/my-bookings?ticket=<id>` deep link (used
+  /// after a successful payment to open the freshly issued ticket immediately).
+  String? _requestedTicketId;
+  bool _ticketAutoOpened = false;
+
   MyBookingsRepository get _repo => ref.read(_myBookingsRepoProvider);
 
   @override
   void initState() {
     super.initState();
     _fetchBookings();
+  }
+
+  /// Reads the deep-link ticket id (`/my-bookings?ticket=<id>`) from the router.
+  /// Called from [build], which registers a dependency on the router state so
+  /// the value is refreshed when the user is navigated here after payment.
+  void _syncRequestedTicket(BuildContext context) {
+    try {
+      final param =
+          GoRouterState.of(context).uri.queryParameters['ticket'];
+      if (param != null && param.isNotEmpty) {
+        _requestedTicketId ??= param;
+      }
+    } catch (_) {
+      // No router state available (e.g. in a widget test) — ignore.
+    }
+  }
+
+  /// Opens the ticket modal for the deep-linked booking once it has loaded.
+  /// Guarded so it fires at most once per screen instance.
+  void _maybeAutoOpenTicket() {
+    if (_ticketAutoOpened) return;
+    final id = _requestedTicketId;
+    if (id == null || id.isEmpty) return;
+    Booking? match;
+    for (final b in _bookings) {
+      if (b.id == id) {
+        match = b;
+        break;
+      }
+    }
+    if (match == null) return;
+    _ticketAutoOpened = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _openTicketModal(context, match!);
+    });
   }
 
   bool _isNonExpired(Booking b) {
@@ -114,6 +155,7 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
             _loading = false;
             _error = null;
           });
+          _maybeAutoOpenTicket();
         } else {
           setState(() {
             // A session/auth failure just means we can't reach the user's
@@ -139,6 +181,7 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
           _loading = false;
           _error = null;
         });
+        _maybeAutoOpenTicket();
 
         // Persist and pre-download tickets in the background so the list
         // renders immediately instead of blocking on disk writes / downloads.
@@ -214,6 +257,10 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context);
+    // Pick up the `?ticket=<id>` deep link (used after a successful payment to
+    // open the freshly issued ticket) and auto-open it once loaded.
+    _syncRequestedTicket(context);
+    _maybeAutoOpenTicket();
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -491,6 +538,39 @@ String _statusLabel(String status) {
 /// measurable cost in a scrolling list.
 final _cardDateFormat = DateFormat('EEE, d MMM yyyy');
 
+/// Opens the full-screen ticket preview for [booking] with a fade + scale
+/// transition. Shared by the booking card's "View Ticket" action and the
+/// auto-open flow driven by the `/my-bookings?ticket=<id>` deep link.
+void _openTicketModal(BuildContext context, Booking booking) {
+  Navigator.of(context).push(
+    PageRouteBuilder(
+      opaque: false,
+      barrierDismissible: true,
+      barrierColor: Colors.black.withOpacity(0.88),
+      pageBuilder: (context, animation, secondaryAnimation) {
+        return _TicketModal(booking: booking);
+      },
+      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        // Curve the raw value instead of wrapping in a `CurvedAnimation`:
+        // a CurvedAnimation registers a status listener on its parent and is
+        // never disposed when the route is popped, leaking a listener per
+        // ticket preview opened.
+        return AnimatedBuilder(
+          animation: animation,
+          child: child,
+          builder: (context, child) {
+            final t = Curves.easeOutCubic.transform(animation.value);
+            return Opacity(
+              opacity: t,
+              child: Transform.scale(scale: 0.95 + 0.05 * t, child: child),
+            );
+          },
+        );
+      },
+    ),
+  );
+}
+
 class _BookingCard extends StatelessWidget {
   final Booking booking;
   final VoidCallback? onTap;
@@ -498,33 +578,7 @@ class _BookingCard extends StatelessWidget {
   const _BookingCard({required this.booking, this.onTap});
 
   void _showTicketModal(BuildContext context) {
-    Navigator.of(context).push(
-      PageRouteBuilder(
-        opaque: false,
-        barrierDismissible: true,
-        barrierColor: Colors.black.withOpacity(0.88),
-        pageBuilder: (context, animation, secondaryAnimation) {
-          return _TicketModal(booking: booking);
-        },
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          // Curve the raw value instead of wrapping in a `CurvedAnimation`:
-          // a CurvedAnimation registers a status listener on its parent and is
-          // never disposed when the route is popped, leaking a listener per
-          // ticket preview opened.
-          return AnimatedBuilder(
-            animation: animation,
-            child: child,
-            builder: (context, child) {
-              final t = Curves.easeOutCubic.transform(animation.value);
-              return Opacity(
-                opacity: t,
-                child: Transform.scale(scale: 0.95 + 0.05 * t, child: child),
-              );
-            },
-          );
-        },
-      ),
-    );
+    _openTicketModal(context, booking);
   }
 
   @override
@@ -725,6 +779,7 @@ class _TicketModal extends ConsumerStatefulWidget {
 
 class _TicketModalState extends ConsumerState<_TicketModal> {
   String? _localImagePath;
+  bool _downloadingTicket = false;
 
   @override
   void initState() {
@@ -766,6 +821,54 @@ class _TicketModalState extends ConsumerState<_TicketModal> {
         }
       }
     } catch (_) {}
+  }
+
+  /// Downloads the ticket image and hands it to the native share sheet so the
+  /// user can save it to their gallery or send it on. Reuses the locally cached
+  /// image when available and falls back to fetching it from the network.
+  Future<void> _downloadTicket() async {
+    if (_downloadingTicket) return;
+    final l10n = AppLocalizations.of(context);
+    setState(() => _downloadingTicket = true);
+    try {
+      Uint8List? bytes;
+      final localPath = _localImagePath;
+      if (localPath != null && localPath.isNotEmpty) {
+        bytes = await File(localPath).readAsBytes();
+      } else {
+        final imageUrl = widget.booking.ticketImage;
+        if (imageUrl != null && imageUrl.isNotEmpty) {
+          final api = ref.read(apiClientProvider);
+          final response = await api.downloadBytes(imageUrl);
+          final data = response.data;
+          if (data is List<int>) {
+            bytes = Uint8List.fromList(data);
+          }
+        }
+      }
+      if (bytes == null) {
+        throw StateError('Ticket image unavailable');
+      }
+      final refCode = widget.booking.referenceCode.isNotEmpty
+          ? widget.booking.referenceCode
+          : widget.booking.id;
+      await ref.read(fileServiceProvider).saveAndShare(
+            bytes: bytes,
+            fileName: 'katisha_ticket_$refCode.png',
+            mimeType: 'image/png',
+            subject: l10n.translate('download_ticket'),
+          );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(l10n.translate('error_server')),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _downloadingTicket = false);
+    }
   }
 
   Widget _buildModalImageLoad() {
@@ -958,6 +1061,45 @@ class _TicketModalState extends ConsumerState<_TicketModal> {
                               ),
                             ),
                           ],
+                        ),
+                      ),
+
+                      const SizedBox(height: 12),
+
+                      // Download / share the ticket image via the native share
+                      // sheet so the user can save it to their gallery.
+                      SizedBox(
+                        width: ticketWidth,
+                        height: 46,
+                        child: FilledButton.icon(
+                          onPressed: _downloadingTicket ? null : _downloadTicket,
+                          icon: _downloadingTicket
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : const Icon(Icons.download_rounded, size: 18),
+                          label: Text(
+                            AppLocalizations.of(context)
+                                .translate('download_ticket'),
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            disabledBackgroundColor: AppColors.primary,
+                            disabledForegroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
                         ),
                       ),
                     ],

@@ -4,7 +4,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:intl/intl.dart';
 import 'package:lottie/lottie.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/socket_service.dart';
 import '../../../../core/error/failures.dart';
@@ -16,6 +18,7 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../core/widgets/city_autocomplete_field.dart' show cityOptions;
 import '../../../../core/widgets/katisha_modal.dart';
 import '../../data/booking_repository.dart';
+import '../widgets/seat_selection_sheet.dart';
 import '../../../../shared/models/route_model.dart';
 import '../../../../shared/models/booking_model.dart';
 import '../../../../shared/utils/service_fee.dart';
@@ -26,6 +29,43 @@ import '../../../../l10n/app_localizations.dart';
 /// allocation each time just to read one element.
 String? _stepLabelsLocale;
 List<String>? _stepLabelsCache;
+
+/// Katisha customer support WhatsApp group — mirrors the web
+/// `WHATSAPP_GROUP` constant in `PaymentStatus.tsx`.
+const String _whatsappSupportUrl =
+    'https://chat.whatsapp.com/Kd41kMf8OIBFkgzaCM6vXf';
+
+/// Visual tone for the payment result ticket-stub card (matches the web
+/// `TicketCard tone="success" | "error"`).
+enum _PaymentTone { success, error }
+
+/// Paints a horizontal dashed rule — the perforated edge of the payment
+/// result ticket-stub card.
+class _DashedLinePainter extends CustomPainter {
+  _DashedLinePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1
+      ..strokeCap = StrokeCap.round;
+    const dash = 4.0;
+    const gap = 4.0;
+    double x = 0;
+    while (x < size.width) {
+      final end = (x + dash).clamp(0.0, size.width).toDouble();
+      canvas.drawLine(Offset(x, 0), Offset(end, 0), paint);
+      x += dash + gap;
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DashedLinePainter oldDelegate) =>
+      oldDelegate.color != color;
+}
 
 List<String> _stepLabels(BuildContext context) {
   final l10n = AppLocalizations.of(context);
@@ -68,12 +108,6 @@ List<_GroupedRow> _flattenGroupedRows(
 
 /// Duration for the snappy, smooth bottom-sheet enter/exit animation.
 const _sheetAnimDuration = Duration(milliseconds: 160);
-
-/// PawaPay online payment fee — mirrors the web BookingWizard fallback:
-/// Transaction Fee = round(fare × payoutRate) + payoutFixed, with the server
-/// defaults payoutRate 1% and payoutFixed 60 RWF.
-const _payoutRate = 0.01;
-const _payoutFixed = 60;
 
 /// East-African destination groups mirroring the web BookingWizard's route
 /// catalogue (Kigali origin + cross-border cities). Booking is East Africa
@@ -144,6 +178,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   // Step 3: Seats
   int _seatCount = 1;
+  /// Live seat map selection (empty when the fallback count is used).
+  List<String> _selectedSeatNumbers = [];
+  String? _selectedSeatClientId;
+  /// True once the interactive seat map has produced a selection.
+  bool _seatMapActive = false;
+  /// True once the rider has confirmed seats in the modal (map or fallback).
+  bool _seatsConfirmed = false;
 
   // Step 4: Payment (online via PawaPay is the only option; 'mom' is the
   // default mobile-money provider recorded on the booking, matching the web's
@@ -167,8 +208,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   bool _paymentWaiting = false;
   String? _confirmedReferenceCode;
   String? _confirmedTicketImage;
+  int? _confirmedAmount;
   String? _paymentWaitingBookingId;
   String? _paymentWaitingReference;
+
+  /// The exact amount the customer is being asked to pay (server-quoted
+  /// `pricing.customerTotal`, falling back to `totalAmount` — the same lookup
+  /// the web PaymentStatus page does with `?amount=`). Null until the create
+  /// response arrives.
+  int? _paymentWaitingAmount;
   String? _paymentError;
   bool _cancellingWaiting = false;
   bool _paymentFailed = false;
@@ -177,10 +225,19 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   Timer? _paymentAbandonTimer;
   Timer? _postConfirmTimer;
   bool _paymentVerifyInFlight = false;
-  int _paymentPollIntervalMs = _minPaymentPollMs;
+  int _paymentPollIntervalMs = _fastPollMs;
+  int _paymentPollElapsedMs = 0;
 
-  static const int _minPaymentPollMs = 1000;
-  static const int _maxPaymentPollMs = 4000;
+  // Poll cadence mirrors the web PaymentStatus page: aggressive 1s polling for
+  // the first 10 seconds (quick failures like insufficient funds resolve in
+  // <10s), then a steady 2s interval.
+  static const int _fastPollMs = 1000;
+  static const int _slowPollMs = 2000;
+  static const int _fastPollThresholdMs = 10000;
+
+  /// Hard cap on how long the app waits for a payment before abandoning the
+  /// booking — mirrors the web PaymentStatus 5-minute timeout.
+  static const Duration _paymentAbandonTimeout = Duration(minutes: 5);
 
   late AnimationController _progressAnimController;
   late AnimationController _confirmAnimController;
@@ -266,6 +323,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       _destination = _selectedRoute!.destination;
       _searchRoutes();
     }
+    _resetSeatSelection();
     setState(() {});
   }
 
@@ -286,7 +344,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         if (_selectedTime == null) return AppLocalizations.of(context).translate('select_departure_time');
         return null;
       case 3:
-        if (_seatCount < 1) return 'At least 1 seat is required';
+        if (!_seatsConfirmed) {
+          return 'Please choose and confirm your seats.';
+        }
+        if (_seatMapActive && _selectedSeatNumbers.isEmpty) {
+          return 'At least 1 seat is required';
+        }
+        if (!_seatMapActive && _seatCount < 1) {
+          return 'At least 1 seat is required';
+        }
         return null;
       case 4:
         if (_phoneController.text.replaceAll(RegExp(r'[^0-9]'), '').length < 9) return 'Please enter a valid phone number';
@@ -335,9 +401,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   int? _availabilityWindowsDay;
   int _availabilityWindowsStamp = -1;
 
-  List<(int, int)>? _resolveAvailabilityWindows() {
+  List<(int, int)>? _resolveAvailabilityWindows(DateTime date) {
     if (_agencyWorkingHours.isEmpty) return null;
-    final dayOfWeek = _selectedDate.weekday % 7;
+    final dayOfWeek = date.weekday % 7;
     final stamp = identityHashCode(_agencyWorkingHours);
     if (_availabilityWindowsDay == dayOfWeek &&
         _availabilityWindowsStamp == stamp) {
@@ -368,18 +434,65 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     return h * 60 + m;
   }
 
-  bool _isTimeSlotAvailable(String time) {
-    // East African cross-border booking requires 2+ days advance (enforced on
-    // the calendar), so no same-day/curfew restrictions apply to time slots.
-    final windows = _resolveAvailabilityWindows();
-    if (windows == null) return true;
-    if (windows.isEmpty) return false;
+  /// Current wall-clock time as minutes since midnight.
+  static int _nowMinutes() {
+    final now = DateTime.now();
+    return now.hour * 60 + now.minute;
+  }
+
+  static bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  bool _isTimeSlotAvailable(String time, [DateTime? forDate]) {
+    final date = forDate ?? _selectedDate;
     final minutes = _parseHhMm(time);
     if (minutes == null) return false;
+    // Past departures on the current day are never bookable (mirrors the web,
+    // which disables any slot at or before the current Kigali time).
+    if (_isSameDay(date, DateTime.now()) && minutes <= _nowMinutes()) {
+      return false;
+    }
+    final windows = _resolveAvailabilityWindows(date);
+    if (windows == null) return true;
+    if (windows.isEmpty) return false;
     for (final w in windows) {
       if (minutes >= w.$1 && minutes < w.$2) return true;
     }
     return false;
+  }
+
+  /// The candidate departure slots for the selected route: its configured
+  /// `departureTimes` when present, otherwise the 30-minute slot grid.
+  List<String> _baseRouteSlots() {
+    final routeTimes = (_selectedRoute?.departureTimes ?? const <String>[])
+        .map((t) => t.trim())
+        .where((t) => t.isNotEmpty)
+        .toList();
+    if (routeTimes.isNotEmpty) {
+      return routeTimes.toSet().toList()..sort();
+    }
+    return _allHalfHourSlots();
+  }
+
+  /// Whether today still has at least one bookable departure ahead (mirrors the
+  /// web `hasBookableTimeForDate`).
+  bool _hasBookableDepartureToday() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    for (final slot in _baseRouteSlots()) {
+      if (_isTimeSlotAvailable(slot, today)) return true;
+    }
+    return false;
+  }
+
+  /// Earliest date the user may pick: today while a departure remains, else
+  /// tomorrow (mirrors the web `earliestBookableDateStr`).
+  DateTime _earliestBookableDate() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return _hasBookableDepartureToday()
+        ? today
+        : today.add(const Duration(days: 1));
   }
 
   // ── Route search ──
@@ -479,6 +592,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           }
         });
       }
+      // Auto-open the seat map once the passenger/seat step is reached, the
+      // same way the schedule pickers open on their step.
+      if (_currentStep == 3) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _openSeatModal();
+        });
+      }
     } else {
       _submitBooking();
     }
@@ -559,7 +680,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       _datePicked = false;
       _selectedTime = null;
 
-      _seatCount = 1;
+      _resetSeatSelection();
 
       _paymentChannel = null;
 
@@ -570,12 +691,16 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       _paymentWaiting = false;
       _confirmedReferenceCode = null;
       _confirmedTicketImage = null;
+      _confirmedAmount = null;
       _paymentWaitingBookingId = null;
       _paymentWaitingReference = null;
+      _paymentWaitingAmount = null;
       _paymentError = null;
       _paymentFailed = false;
       _paymentFailureReason = null;
       _cancellingWaiting = false;
+      _paymentPollIntervalMs = _fastPollMs;
+      _paymentPollElapsedMs = 0;
       _paymentPollTimer?.cancel();
       _paymentPollTimer = null;
       _paymentAbandonTimer?.cancel();
@@ -612,11 +737,20 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       'destination': _destination,
       'travelDate': _selectedDate.toIso8601String().substring(0, 10),
       'travelTime': _selectedTime,
-      'seats': _seatCount,
+      'seats': _effectiveSeatCount,
       'paymentChannel': channel,
       'paymentMethod': _paymentMethod,
       'phone': _normalizePhone(_phoneController.text),
     };
+
+    // Live seat-map selection (locked in via the seat modal): send the exact
+    // seats and the client id that owns their holds so the booking claims them.
+    if (_selectedSeatNumbers.isNotEmpty) {
+      data['seatNumbers'] = _selectedSeatNumbers;
+      if (_selectedSeatClientId != null && _selectedSeatClientId!.isNotEmpty) {
+        data['seatClientId'] = _selectedSeatClientId;
+      }
+    }
 
     if (_selectedPickupPoint != null) {
       data['pickupPoint'] = _selectedPickupPoint;
@@ -681,6 +815,18 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         final status = bookingObj['status'] as String? ?? bookingData['status'] as String? ?? 'pending';
         final rejectionReason = bookingObj['rejectionReason'] as String? ?? bookingData['rejectionReason'] as String?;
 
+        // The exact customer total the server quoted — mirrors the web's
+        // `booking.pricing?.customerTotal ?? booking.totalAmount` amount
+        // lookup, so every screen shows what is actually charged.
+        final pricingMap = bookingObj['pricing'] is Map
+            ? bookingObj['pricing'] as Map
+            : null;
+        final serverAmount = ((pricingMap?['customerTotal'] ??
+                    bookingObj['totalAmount'] ??
+                    bookingData['totalAmount']) as num?)
+                ?.toInt() ??
+            _quoteTotal(effectiveFareTotal());
+
         // Persist the booking locally right away so it is always available
         // offline once purchased (internet is guaranteed at this moment).
         _cacheTicketLocally(bookingId, bookingObj);
@@ -703,11 +849,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             _bookingConfirmed = true;
             _confirmedReferenceCode = refCode;
             _confirmedTicketImage = ticketImg;
+            _confirmedAmount = serverAmount;
           });
           _confirmAnimController.forward();
           _postConfirmTimer?.cancel();
+          // Mirrors the web wizard: land on My Tickets with the ticket opened.
           _postConfirmTimer = Timer(const Duration(seconds: 3), () {
-            if (mounted) context.go('/my-bookings');
+            if (mounted) context.go('/my-bookings?ticket=$bookingId');
           });
         } else if (status == 'cancelled') {
           // User cancelled the payment — return home without showing
@@ -728,6 +876,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             _paymentFailureReason = rejectionReason;
             _paymentWaitingBookingId = bookingId;
             _paymentWaitingReference = refCode;
+            _paymentWaitingAmount = serverAmount;
           });
           _recordFailureNotification(bookingId, refCode, rejectionReason);
         } else {
@@ -736,6 +885,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             _paymentWaiting = true;
             _paymentWaitingBookingId = bookingId;
             _paymentWaitingReference = refCode;
+            _paymentWaitingAmount = serverAmount;
           });
           _listenForPayment(bookingId);
           _startPaymentPolling();
@@ -946,11 +1096,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         _bookingConfirmed = true;
         _confirmedReferenceCode = referenceCode ?? _paymentWaitingReference;
         _confirmedTicketImage = ticketImage;
+        _confirmedAmount = _paymentWaitingAmount ?? _quoteTotal(effectiveFareTotal());
       });
       _confirmAnimController.forward();
       _postConfirmTimer?.cancel();
-      _postConfirmTimer = Timer(const Duration(seconds: 3), () {
-        if (mounted) context.go('/my-bookings');
+      // Mirrors the web PaymentStatus success: a short confirmation, then
+      // My Tickets with the ticket opened for download/save.
+      _postConfirmTimer = Timer(const Duration(milliseconds: 1800), () {
+        if (mounted) context.go('/my-bookings?ticket=$bookingId');
       });
     } else {
       // User cancelled — go home without showing the failure screen.
@@ -969,6 +1122,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         _bookingConfirmed = false;
         _paymentFailed = true;
         _paymentFailureReason = reason;
+        _paymentWaitingBookingId = bookingId;
+        _paymentWaitingReference = referenceCode ?? _paymentWaitingReference;
       });
     }
   }
@@ -978,13 +1133,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   /// sees. Uses the public track endpoint by reference code, which reads the
   /// authoritative booking status the pawaPay webhook / sweeper updates.
   ///
-  /// The interval backs off from [_minPaymentPollMs] up to [_maxPaymentPollMs]
-  /// while the payment stays pending. A flat 1s `Timer.periodic` hammered the
-  /// endpoint with the same answer for the whole window; the authoritative
-  /// outcome still arrives promptly because the socket pushes
-  /// `payment:confirmed` and the abandon timer does a final check at 40s.
+  /// Cadence mirrors the web PaymentStatus page: 1s for the first 10 seconds
+  /// (quick failures like insufficient funds resolve in <10s), then a steady
+  /// 2s interval.
   void _startPaymentPolling() {
-    _paymentPollIntervalMs = _minPaymentPollMs;
+    _paymentPollIntervalMs = _fastPollMs;
+    _paymentPollElapsedMs = 0;
     _scheduleNextPaymentPoll();
   }
 
@@ -997,8 +1151,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       if (!mounted) return;
       // Keep polling only while we're still waiting on a terminal outcome.
       if (!_paymentWaiting) return;
-      _paymentPollIntervalMs =
-          (_paymentPollIntervalMs * 2).clamp(_minPaymentPollMs, _maxPaymentPollMs);
+      _paymentPollElapsedMs += _paymentPollIntervalMs;
+      _paymentPollIntervalMs = _paymentPollElapsedMs >= _fastPollThresholdMs
+          ? _slowPollMs
+          : _fastPollMs;
       _scheduleNextPaymentPoll();
     });
   }
@@ -1008,13 +1164,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     _paymentPollTimer = null;
   }
 
-  /// Hard cap on how long the waiting screen stays: never longer than 40s. Do
-  /// one final verification and, if the payment still isn't confirmed as paid,
-  /// abandon the booking (releasing the held seat) and surface the failed
-  /// screen — so it never sits on "pending" forever.
+  /// Hard cap on how long the waiting screen stays: never longer than
+  /// [_paymentAbandonTimeout] (5 minutes, matching the web). Do one final
+  /// verification and, if the payment still isn't confirmed as paid, abandon
+  /// the booking (releasing the held seat) and surface the failed screen — so
+  /// it never sits on "pending" forever.
   void _startPaymentAbandonTimer() {
     _paymentAbandonTimer?.cancel();
-    _paymentAbandonTimer = Timer(const Duration(seconds: 40), () async {
+    _paymentAbandonTimer = Timer(_paymentAbandonTimeout, () async {
       final reference = _paymentWaitingReference;
       final bookingId = _paymentWaitingBookingId;
       var terminal = false;
@@ -1063,7 +1220,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         );
       }
       if (terminal || !mounted) return;
-      // Still not paid after 40s — abandon to release the seat and fail.
+      // Still not paid after the timeout — abandon to release the seat and fail.
       if (bookingId != null && bookingId.isNotEmpty) {
         await _repo.abandonBooking(bookingId);
       }
@@ -1826,9 +1983,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   ) {
     final isSelected = _selectedRoute?.id == route.id;
     final effectivePrice = route.effectivePrice ?? route.price;
-    final serviceFee = systemFeeFor(route.type, effectivePrice, 1).round();
-    final onlineFee = (effectivePrice * _payoutRate).round() + _payoutFixed;
-    final total = effectivePrice + serviceFee + onlineFee;
+    final total = _perSeatTotalFor(effectivePrice);
     final hasDiscount =
         route.effectivePrice != null && route.effectivePrice != route.price;
     final name = route.agency.name;
@@ -1838,6 +1993,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         setState(() {
           _selectedRoute = route;
           _selectedPickupPoint = null;
+          _resetSeatSelection();
         });
         _fetchAgencyWorkingHours(route.agency.id);
         // No intermediate pickup points to choose: move straight on.
@@ -2171,7 +2327,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           label: l10n.translate('travel_date'),
           icon: Icons.calendar_today_outlined,
           value: _datePicked
-              ? '${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}'
+              ? _formatTravelDate(_selectedDate)
               : l10n.translate('select_travel_date'),
           onTap: _openDatePickerModal,
         ),
@@ -2243,15 +2399,21 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final month = _calendarMonth.month;
     final firstDay = DateTime(year, month, 1);
     final lastDay = DateTime(year, month + 1, 0);
-    final startWeekday = firstDay.weekday % 7;
-    final today = DateTime.now();
+    // Monday-first grid, matching the web calendar ((getDay() + 6) % 7).
+    final startWeekday = firstDay.weekday - 1;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final earliest = _earliestBookableDate();
+    // The previous-month arrow is blocked once the displayed month is the
+    // current month (mirrors the web calendar).
+    final canGoPrev =
+        year > today.year || (year == today.year && month > today.month);
 
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: AppColors.white,
         borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-        border: Border.all(color: AppColors.border),
       ),
       child: Column(
         children: [
@@ -2259,16 +2421,19 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               IconButton(
-                onPressed: () => setState(() {
-                  _calendarMonth = DateTime(year, month - 1);
-                }),
+                onPressed: canGoPrev
+                    ? () => setState(() {
+                          _calendarMonth = DateTime(year, month - 1);
+                        })
+                    : null,
                 icon: const Icon(Icons.chevron_left, size: 20),
                 color: AppColors.textSub,
+                disabledColor: AppColors.textMuted.withValues(alpha: 0.4),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
               ),
               Text(
-                _monthName(month),
+                '${_monthName(month)} $year',
                 style: AppTypography.titleMedium,
               ),
               IconButton(
@@ -2284,7 +2449,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           ),
           const SizedBox(height: AppSpacing.sm),
           Row(
-            children: ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+            children: _weekdayNarrowLabels()
                 .map((d) => Expanded(
                       child: Center(
                         child: Text(
@@ -2310,12 +2475,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               if (index < startWeekday) return const SizedBox.shrink();
               final day = index - startWeekday + 1;
               final date = DateTime(year, month, day);
-              // East African cross-border travel requires at least 2 days advance
-              // booking (matches the web minDays = 2).
-              const advanceDays = 2;
-              final minDate = DateTime(
-                today.year, today.month, today.day + advanceDays);
-              final isUnavailable = date.isBefore(minDate);
+              final isUnavailable = date.isBefore(earliest);
+              final isToday = _isSameDay(date, today);
               final isSelected = date.year == _selectedDate.year &&
                   date.month == _selectedDate.month &&
                   date.day == _selectedDate.day;
@@ -2337,32 +2498,43 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     _selectedDate = date;
                     _datePicked = true;
                     _selectedTime = null;
+                    _resetSeatSelection();
                   });
                   // Bring the departure-time selection into view after a date
                   // is picked.
                   _scrollToDepartureTime();
                   onDatePicked?.call();
                 },
-                child: Center(
-                  child: Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: isSelected ? AppColors.primary : null,
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                    ),
-                    child: Center(
-                      child: Text(
-                        '$day',
-                        style: AppTypography.bodyMedium.copyWith(
-                          color: isSelected ? AppColors.white : AppColors.text,
-                          fontWeight:
-                              isSelected ? FontWeight.w700 : FontWeight.w400,
+                  child: Center(
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? AppColors.primary
+                            : isToday
+                                ? AppColors.primaryLight
+                                : null,
+                        borderRadius:
+                            BorderRadius.circular(AppSpacing.radiusSm),
+                      ),
+                      child: Center(
+                        child: Text(
+                          '$day',
+                          style: AppTypography.bodyMedium.copyWith(
+                            color: isSelected
+                                ? AppColors.white
+                                : isToday
+                                    ? AppColors.primary
+                                    : AppColors.text,
+                            fontWeight: isSelected || isToday
+                                ? FontWeight.w700
+                                : FontWeight.w400,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
               );
             },
           ),
@@ -2385,16 +2557,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final l10n = AppLocalizations.of(context);
     // Show only the selected route's real departure times (matching the web:
     // departureTimes when configured, otherwise the 30-minute slot grid).
-    final routeTimes = (_selectedRoute?.departureTimes ?? const <String>[])
-        .map((t) => t.trim())
-        .where((t) => t.isNotEmpty)
-        .toList();
-    final List<String> baseSlots;
-    if (routeTimes.isNotEmpty) {
-      baseSlots = routeTimes.toSet().toList()..sort();
-    } else {
-      baseSlots = _allHalfHourSlots();
-    }
+    final baseSlots = _baseRouteSlots();
     final morning = <String>[];
     final afternoon = <String>[];
     final night = <String>[];
@@ -2410,7 +2573,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     }
 
     Widget _buildSection({required String title, required List<String> slots}) {
-      final availableSlots = slots.where(_isTimeSlotAvailable).toList();
+      final availableSlots =
+          slots.where((s) => _isTimeSlotAvailable(s)).toList();
       if (availableSlots.isEmpty) return const SizedBox.shrink();
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2447,24 +2611,25 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               final isSelected = _selectedTime == slot;
               return GestureDetector(
                 onTap: () {
-                  setState(() => _selectedTime = slot);
+                  setState(() {
+                    _selectedTime = slot;
+                    _resetSeatSelection();
+                  });
                   _scheduleAutoAdvance();
                   onTimePicked?.call();
                 },
                 child: Container(
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: isSelected ? AppColors.primary : AppColors.white,
+                    color: isSelected
+                        ? AppColors.primary
+                        : AppColors.primaryLight,
                     borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                    border: Border.all(
-                      color: isSelected ? AppColors.primary : AppColors.border,
-                      width: isSelected ? 2 : 1,
-                    ),
                   ),
                   child: Text(
                     slot,
                     style: AppTypography.titleMedium.copyWith(
-                      color: isSelected ? AppColors.white : AppColors.text,
+                      color: isSelected ? AppColors.white : AppColors.primary,
                       fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
                     ),
                   ),
@@ -2493,6 +2658,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   Widget _buildSeatsStep() {
     final l10n = AppLocalizations.of(context);
+    final effectivePrice =
+        _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
+    final total = effectivePrice * _effectiveSeatCount;
     return Column(
       key: const ValueKey('step-seats'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2507,95 +2675,132 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           l10n.translate('seats_needed'),
           style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
         ),
-        const SizedBox(height: AppSpacing.xxl),
-        Center(
-          child: Column(
+        const SizedBox(height: AppSpacing.xl),
+        _buildLocationSelector(
+          label: l10n.translate('seats'),
+          icon: Icons.event_seat_outlined,
+          value: _seatSelectionLabel(l10n),
+          onTap: _openSeatModal,
+        ),
+        if (_selectedSeatNumbers.isNotEmpty) ...[
+          const SizedBox(height: AppSpacing.lg),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.xxl,
-                  vertical: AppSpacing.lg,
-                ),
-                decoration: BoxDecoration(
-                  color: AppColors.surface,
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    _buildSeatButton(
-                      icon: Icons.remove,
-                      onPressed: _seatCount > 1
-                          ? () => setState(() => _seatCount--)
-                          : null,
-                    ),
-                    const SizedBox(width: AppSpacing.xl),
-                    Text(
-                      '$_seatCount',
-                      style: AppTypography.headlineLarge.copyWith(
-                        fontSize: 48,
-                        fontWeight: FontWeight.w900,
-                        color: AppColors.primary,
+              for (final label in _selectedSeatNumbers)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AppColors.primaryLight,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        label,
+                        style: AppTypography.labelMedium.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primary,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: AppSpacing.xl),
-                    _buildSeatButton(
-                      icon: Icons.add,
-                      onPressed: _seatCount < 10
-                          ? () => setState(() => _seatCount++)
-                          : null,
-                    ),
-                  ],
+                      const SizedBox(width: 4),
+                      GestureDetector(
+                        onTap: () => setState(() =>
+                            _selectedSeatNumbers = _selectedSeatNumbers
+                                .where((l) => l != label)
+                                .toList()),
+                        child: const Icon(Icons.close,
+                            size: 12, color: AppColors.primary),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Text(
-                _seatCount == 1 ? l10n.translate('1_seat_selected') : l10n.translate('n_seats_selected').replaceAll('%d', '$_seatCount'),
-                style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
-              ),
             ],
           ),
-        ),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            '${l10n.translate('total')}: ${_formatAmount(total)} RWF',
+            style: AppTypography.titleMedium.copyWith(color: AppColors.primary),
+          ),
+        ],
       ],
     );
   }
 
-  Widget _buildSeatButton({
-    required IconData icon,
-    VoidCallback? onPressed,
-  }) {
-    return GestureDetector(
-      onTap: onPressed,
-      child: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: onPressed != null ? AppColors.white : AppColors.surface,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-          border: Border.all(
-            color: onPressed != null ? AppColors.border : AppColors.border.withValues(alpha: 0.5),
-            width: 2,
-          ),
-        ),
-        child: Icon(
-          icon,
-          size: 20,
-          color: onPressed != null ? AppColors.text : AppColors.textMuted,
-        ),
+  /// Human label for the seat selector: the picked seats, their count, or a
+  /// prompt to open the map.
+  String _seatSelectionLabel(AppLocalizations l10n) {
+    if (_seatMapActive && _selectedSeatNumbers.isNotEmpty) {
+      return '${_selectedSeatNumbers.length} ${l10n.translate('seats')} — ${_selectedSeatNumbers.join(', ')}';
+    }
+    if (_seatMapActive) return l10n.translate('select_seats');
+    return _seatCount == 1
+        ? l10n.translate('1_seat_selected')
+        : l10n.translate('n_seats_selected').replaceAll('%d', '$_seatCount');
+  }
+
+  /// Clears any seat choice and hold. Called whenever the departure tuple
+  /// changes so a selection made for one trip is never carried to another
+  /// (mirrors the web wizard's reset on departure change).
+  void _resetSeatSelection() {
+    _seatCount = 1;
+    _selectedSeatNumbers = [];
+    _selectedSeatClientId = null;
+    _seatMapActive = false;
+    _seatsConfirmed = false;
+  }
+
+  // Opens the interactive seat map in the shared Katisha modal. On confirm the
+  // selection is stored and the wizard advances straight to payment, matching
+  // the web wizard.
+  Future<void> _openSeatModal() async {
+    final route = _selectedRoute;
+    if (route == null) return;
+    final price = route.effectivePrice ?? route.price;
+    final result = await showKatishaModal<SeatSelectionResult>(
+      context: context,
+      transitionDuration: _sheetAnimDuration,
+      // Web seat modal is 98dvh on phones and 95dvh from the `sm` breakpoint
+      // (640px), taller than the shared 0.89 selector-sheet factor.
+      heightFactor: MediaQuery.sizeOf(context).width >= 640 ? 0.95 : 0.98,
+      builder: (_) => SeatSelectionSheet(
+        agencyId: route.agency.id,
+        routeId: route.id,
+        travelDate: _selectedDate.toIso8601String().substring(0, 10),
+        travelTime: _selectedTime ?? '',
+        price: price,
+        currency: 'RWF',
+        initialSeatNumbers: _selectedSeatNumbers,
+        initialCount: _seatCount,
       ),
     );
+    if (!mounted || result == null) return;
+    setState(() {
+      _seatMapActive = result.active;
+      _selectedSeatClientId = result.clientId;
+      _selectedSeatNumbers = result.seatNumbers;
+      _seatCount = result.count < 1 ? 1 : result.count;
+      _seatsConfirmed = true;
+      _submitError = null;
+    });
+    // Seats are confirmed (live map or fallback count); go straight to checkout
+    // (payment step), matching the web wizard's handleSeatConfirm.
+    if (_currentStep == 3) {
+      setState(() => _currentStep = 4);
+      _progressAnimController
+        ..reset()
+        ..forward();
+      _scrollToTop();
+    }
   }
 
   // ── Step 4: Payment ──
 
   Widget _buildPaymentStep() {
     final l10n = AppLocalizations.of(context);
-    final effectivePrice = _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
-    final fareTotal = effectivePrice * _seatCount;
-    final serviceFee = systemFeeFor(_selectedRoute?.type, effectivePrice, _seatCount).round();
-    final totalAmount = fareTotal + serviceFee;
-    final onlineFee = (fareTotal * _payoutRate).round() + _payoutFixed;
-    final onlineTotal = totalAmount + onlineFee;
+    final onlineTotal = _quoteTotal(effectiveFareTotal());
 
     return Column(
       key: const ValueKey('step-payment'),
@@ -2647,7 +2852,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               ),
               const SizedBox(height: AppSpacing.xs),
               Text(
-                '$_seatCount ${_seatCount == 1 ? 'seat' : 'seats'}  •  ${_selectedRoute?.origin ?? ''} → ${_selectedRoute?.destination ?? ''}',
+                '$_effectiveSeatCount ${_effectiveSeatCount == 1 ? 'seat' : 'seats'}  •  ${_selectedRoute?.origin ?? ''} → ${_selectedRoute?.destination ?? ''}',
                 style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
                 textAlign: TextAlign.center,
               ),
@@ -2727,12 +2932,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // being stranded at the bottom of the tall panel on a long screen.
   Widget _buildOnlinePaymentModal() {
     final l10n = AppLocalizations.of(context);
-    final effectivePrice = _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
-    final fareTotal = effectivePrice * _seatCount;
-    final serviceFee = systemFeeFor(_selectedRoute?.type, effectivePrice, _seatCount).round();
-    final totalAmount = fareTotal + serviceFee;
-    final onlineFee = (fareTotal * _payoutRate).round() + _payoutFixed;
-    final onlineTotal = totalAmount + onlineFee;
+    final onlineTotal = _quoteTotal(effectiveFareTotal());
 
     String nameError = '';
     String phoneError = '';
@@ -2748,6 +2948,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Push the price card down a little from the modal header.
+                const SizedBox(height: AppSpacing.md),
                 // Pricing breakdown
                 Container(
                   width: double.infinity,
@@ -2758,7 +2960,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   ),
                   child: Column(
                     children: [
-                      _buildSummaryRow(l10n.translate('total'), '${_formatAmount(onlineTotal)} RWF', isBold: true),
+                      _buildSummaryRow(
+                        l10n.translate('total'),
+                        '${_formatAmount(onlineTotal)} RWF',
+                        isBold: true,
+                        labelSize: 15,
+                        valueSize: 20,
+                      ),
                     ],
                   ),
                 ),
@@ -3097,116 +3305,256 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   // ── BOOKING CONFIRMED VIEW ──
 
+  // Mirrors the web `PaymentStatus.tsx` paid state: a success ticket-stub card
+  // with the reference code and charged amount plus an "Opening your ticket"
+  // spinner while the app redirects to the booking.
   Widget _buildConfirmedView() {
     final l10n = AppLocalizations.of(context);
     return Scaffold(
-      backgroundColor: AppColors.white,
+      backgroundColor: const Color(0xFFF8FAFC),
       body: AnnotatedRegion<SystemUiOverlayStyle>(
         value: const SystemUiOverlayStyle(
           statusBarIconBrightness: Brightness.dark,
           statusBarBrightness: Brightness.light,
         ),
         child: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.xl),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                ScaleTransition(
-                  scale: CurvedAnimation(
-                    parent: _confirmAnimController,
-                    curve: Curves.elasticOut,
-                  ),
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF16A34A),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.check,
-                      color: AppColors.white,
-                      size: 40,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.xl),
-                Text(
-                  l10n.translate('booking_confirmed'),
-                  style: AppTypography.headlineLarge.copyWith(
-                    color: const Color(0xFF16A34A),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                Text(
-                  l10n.translate('redirecting'),
-                  style: AppTypography.bodyMedium.copyWith(
-                    color: AppColors.textSub,
-                  ),
-                ),
-                if (_confirmedReferenceCode != null) ...[
-                  const SizedBox(height: AppSpacing.lg),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.lg,
-                      vertical: AppSpacing.sm,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    child: Text(
-                      'Ref: $_confirmedReferenceCode',
-                      style: AppTypography.titleSmall.copyWith(
-                        color: AppColors.primary,
-                        letterSpacing: 1,
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.lg,
+                vertical: AppSpacing.xxl,
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 420),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ScaleTransition(
+                      scale: CurvedAnimation(
+                        parent: _confirmAnimController,
+                        curve: Curves.elasticOut,
+                      ),
+                      child: _paymentStatusCard(
+                        tone: _PaymentTone.success,
+                        icon: Icons.check_rounded,
+                        eyebrow: l10n.translate('payment_confirmed_eyebrow'),
+                        title: l10n.translate('booking_confirmed'),
+                        subtitle: l10n.translate('redirecting'),
+                        refLabel: l10n.translate('ref_code'),
+                        amountLabel: l10n.translate('amount'),
+                        referenceCode: _confirmedReferenceCode,
+                        amount: _confirmedAmount,
                       ),
                     ),
-                  ),
-                ],
-                if (_confirmedTicketImage != null &&
-                    _confirmedTicketImage!.isNotEmpty) ...[
-                  const SizedBox(height: AppSpacing.xl),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-                    child: CachedNetworkImage(
-                      imageUrl: _confirmedTicketImage!,
-                      height: 300,
-                      width: double.infinity,
-                      fit: BoxFit.fitWidth,
-                      memCacheWidth: (MediaQuery.of(context).size.width *
-                              MediaQuery.of(context).devicePixelRatio)
-                          .round(),
-                      placeholder: (_, __) => const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                    if (_confirmedTicketImage != null &&
+                        _confirmedTicketImage!.isNotEmpty) ...[
+                      const SizedBox(height: AppSpacing.lg),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+                        child: CachedNetworkImage(
+                          imageUrl: _confirmedTicketImage!,
+                          height: 300,
+                          width: double.infinity,
+                          fit: BoxFit.fitWidth,
+                          memCacheWidth: (MediaQuery.of(context).size.width *
+                                  MediaQuery.of(context).devicePixelRatio)
+                              .round(),
+                          placeholder: (_, __) => const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          errorWidget: (_, __, ___) => const Icon(
+                            Icons.receipt_long,
+                            size: 64,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
                       ),
-                      errorWidget: (_, __, ___) => const Icon(
-                        Icons.receipt_long,
-                        size: 64,
-                        color: AppColors.textMuted,
-                      ),
+                    ],
+                    const SizedBox(height: AppSpacing.lg),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        Text(
+                          l10n.translate('opening_ticket'),
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.textSub,
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                ],
-              ],
+                  ],
+                ),
+              ),
             ),
-          ),
           ),
         ),
       ),
     );
   }
 
+  // ── PAYMENT RESULT CARD (shared by the confirmed + failed views) ──
+
+  // Replicates the web `TicketCard` + `LedgerRow` in `PaymentStatus.tsx`: a
+  // white ticket-stub card with a dashed perforated divider and a small ledger
+  // listing the reference code and the charged amount.
+  Widget _paymentStatusCard({
+    required _PaymentTone tone,
+    required IconData icon,
+    required String eyebrow,
+    required String title,
+    required String subtitle,
+    required String refLabel,
+    required String amountLabel,
+    String? referenceCode,
+    int? amount,
+  }) {
+    final success = tone == _PaymentTone.success;
+    final ink = success ? AppColors.success : AppColors.error;
+    final fill = success ? AppColors.surfaceVariant : AppColors.errorBg;
+    final line = success ? AppColors.border : AppColors.errorBorder;
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+        border: Border.all(color: line),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg + 4,
+              AppSpacing.xl,
+              AppSpacing.lg + 4,
+              AppSpacing.md,
+            ),
+            child: Column(
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: fill,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: line),
+                  ),
+                  child: Icon(icon, size: 26, color: ink),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Text(
+                  eyebrow,
+                  style: AppTypography.labelMedium.copyWith(
+                    color: ink,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  title,
+                  style: AppTypography.headlineSmall.copyWith(
+                    color: AppColors.text,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  style: AppTypography.bodyMedium.copyWith(
+                    color: AppColors.textSub,
+                    height: 1.5,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+          _dashedDivider(),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg + 4,
+              AppSpacing.sm,
+              AppSpacing.lg + 4,
+              AppSpacing.md,
+            ),
+            child: Column(
+              children: [
+                _ledgerRow(refLabel, referenceCode ?? '-'),
+                if (amount != null && amount > 0) ...[
+                  const SizedBox(height: AppSpacing.xs),
+                  _ledgerRow(amountLabel, '${_formatAmount(amount)} RWF'),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ledgerRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.text,
+                fontWeight: FontWeight.w600,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dashedDivider() {
+    return SizedBox(
+      height: 1,
+      width: double.infinity,
+      child: CustomPaint(
+        painter: _DashedLinePainter(color: AppColors.border),
+      ),
+    );
+  }
+
   // ── PAYMENT FAILED VIEW ──
 
-  // Matches the web frontend's failed state (`PaymentStatus.tsx`): a red
-  // status with a clear reason and a retry action. The user is told the
-  // payment failed (mostly due to insufficient funds) and shown how to retry.
+  // Mirrors the web frontend's failed state (`PaymentStatus.tsx`): an error
+  // ticket-stub card with the reason, a "What to do next" info box and two
+  // actions — "Book again" (restart the wizard) and "Contact support" (open the
+  // Katisha WhatsApp group). The user is told no money was deducted.
   Widget _buildPaymentFailedView() {
     final l10n = AppLocalizations.of(context);
     final reason = (_paymentFailureReason != null &&
@@ -3215,7 +3563,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         : l10n.translate('payment_failed_message');
 
     return Scaffold(
-      backgroundColor: AppColors.error,
+      backgroundColor: const Color(0xFFF8FAFC),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
@@ -3224,104 +3572,122 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               vertical: AppSpacing.xxl,
             ),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 400),
+              constraints: const BoxConstraints(maxWidth: 420),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  _paymentStatusCard(
+                    tone: _PaymentTone.error,
+                    icon: Icons.error_outline_rounded,
+                    eyebrow: l10n.translate('payment_failed_eyebrow'),
+                    title: l10n.translate('payment_failed_title'),
+                    subtitle: reason,
+                    refLabel: l10n.translate('ref_code'),
+                    amountLabel: l10n.translate('amount'),
+                    referenceCode: _paymentWaitingReference,
+                    amount: _paymentWaitingAmount,
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+
+                  // "What to do next" info box.
                   Container(
-                    width: 64,
-                    height: 64,
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(AppSpacing.md),
                     decoration: BoxDecoration(
-                      color: AppColors.white.withValues(alpha: 0.2),
-                      shape: BoxShape.circle,
+                      color: AppColors.surfaceVariant,
+                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                      border: Border.all(color: AppColors.border),
                     ),
-                    child: const Icon(
-                      Icons.error_outline_rounded,
-                      size: 32,
-                      color: AppColors.white,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          l10n
+                              .translate('payment_failed_next_title')
+                              .toUpperCase(),
+                          style: AppTypography.labelSmall.copyWith(
+                            color: AppColors.primaryDark,
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: 1.1,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          l10n.translate('payment_failed_next_desc'),
+                          style: AppTypography.bodyMedium.copyWith(
+                            color: AppColors.textSub,
+                            height: 1.5,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: AppSpacing.lg),
-                  Text(
-                    l10n.translate('insufficient_funds'),
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.white,
-                    ),
-                    textAlign: TextAlign.center,
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: SizedBox(
+                          height: 44,
+                          child: ElevatedButton.icon(
+                            onPressed: _retryFromFailed,
+                            icon: const Icon(Icons.check, size: 16),
+                            label: Text(
+                              l10n.translate('book_again'),
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: AppColors.white,
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(
+                                borderRadius:
+                                    BorderRadius.circular(AppSpacing.radiusMd),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: SizedBox(
+                          height: 44,
+                          child: OutlinedButton.icon(
+                            onPressed: _contactSupport,
+                            icon:
+                                const Icon(Icons.chat_bubble_outline, size: 16),
+                            label: Text(
+                              l10n.translate('contact_support'),
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppColors.text,
+                              backgroundColor: AppColors.surfaceVariant,
+                              side: const BorderSide(color: AppColors.border),
+                              shape: RoundedRectangleBorder(
+                                borderRadius:
+                                    BorderRadius.circular(AppSpacing.radiusMd),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    reason,
-                    style: AppTypography.bodyMedium.copyWith(
-                      color: AppColors.white,
-                      height: 1.5,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.lg),
+                  const SizedBox(height: AppSpacing.md),
                   Text(
                     l10n.translate('no_money_deducted'),
                     style: AppTypography.bodySmall.copyWith(
-                      color: AppColors.white.withValues(alpha: 0.9),
+                      color: AppColors.textMuted,
                       height: 1.4,
                     ),
                     textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.xl),
-
-                  // Retry: white button, blue text, small radius — returns the
-                  // user to the destination selection to start a fresh trip.
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _retryFromFailed,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.white,
-                        foregroundColor: AppColors.primary,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                        ),
-                        elevation: 0,
-                      ),
-                      child: Text(
-                        l10n.translate('retry'),
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-
-                  // Done: behaves the same as Retry — return to destination
-                  // selection to start a fresh trip.
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      onPressed: _retryFromFailed,
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.white,
-                        side: const BorderSide(
-                          color: AppColors.white,
-                          width: 1.5,
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                        ),
-                      ),
-                      child: Text(
-                        l10n.translate('done'),
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
                   ),
                 ],
               ),
@@ -3332,6 +3698,17 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
+  // Opens the Katisha customer-support WhatsApp group, mirroring the web's
+  // "Contact support" action.
+  Future<void> _contactSupport() async {
+    final uri = Uri.parse(_whatsappSupportUrl);
+    try {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      // Best-effort: ignore launch failures (e.g. no browser/WhatsApp).
+    }
+  }
+
   // ── PAYMENT WAITING VIEW ──
 
   // Matches the web frontend's payment waiting overlay (`PaymentStatus.tsx`):
@@ -3339,12 +3716,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // same copy and a single green "Cancel payment" CTA.
   Widget _buildPaymentWaitingView() {
     final l10n = AppLocalizations.of(context);
-    final effectivePrice =
-        _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
-    final fareTotal = effectivePrice * _seatCount;
-    final serviceFee =
-        systemFeeFor(_selectedRoute?.type, effectivePrice, _seatCount).round();
-    final totalAmount = fareTotal + serviceFee;
+    // Prefer the server-quoted customer total (what is actually charged),
+    // falling back to a local quote — mirrors the web's `?amount=` lookup.
+    final totalAmount =
+        _paymentWaitingAmount ?? _quoteTotal(effectiveFareTotal());
 
     return Scaffold(
       backgroundColor: AppColors.white,
@@ -3418,35 +3793,39 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     const SizedBox(height: AppSpacing.lg),
                   ],
 
-                  // Green "Cancel payment" CTA
+                  // Green "Cancel payment" CTA (matches the web
+                  // `--green-cta` / `--green-ink` button in `PaymentStatus.tsx`).
                   SizedBox(
                     width: double.infinity,
                     height: 40,
                     child: ElevatedButton.icon(
-                      onPressed: _cancellingWaiting ? null : _cancelFromPaymentWaiting,
+                      onPressed:
+                          _cancellingWaiting ? null : _cancelFromPaymentWaiting,
                       icon: _cancellingWaiting
                           ? const SizedBox(
                               width: 14,
                               height: 14,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: AppColors.white,
+                                color: Color(0xFF0B3D0B),
                               ),
                             )
                           : const Icon(Icons.close, size: 16),
                       label: Text(
-                        _cancellingWaiting ? l10n.translate('payment_cancelling') : l10n.translate('payment_cancel'),
+                        _cancellingWaiting
+                            ? l10n.translate('payment_cancelling')
+                            : l10n.translate('payment_cancel'),
                         style: const TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
-                          color: AppColors.white,
+                          color: Color(0xFF0B3D0B),
                         ),
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: AppColors.white,
-                        disabledBackgroundColor: AppColors.primary,
-                        disabledForegroundColor: AppColors.white,
+                        backgroundColor: const Color(0xFF74E24C),
+                        foregroundColor: const Color(0xFF0B3D0B),
+                        disabledBackgroundColor: const Color(0xFF74E24C),
+                        disabledForegroundColor: const Color(0xFF0B3D0B),
                         elevation: 0,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
@@ -3496,6 +3875,46 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     return buffer.toString();
   }
 
+  /// Deposit network for the pricing quote — mirrors the web wizard's
+  /// `mnoFromPaymentMethod(form.paymentMethod || 'mom')`.
+  String get _depositMno =>
+      mnoFromPaymentMethod(_paymentMethod).name;
+
+  /// Seats actually being booked: the live map selection when present,
+  /// otherwise the fallback stepper count. Mirrors the web
+  /// `selectedSeatNumbers.length || form.seats`.
+  int get _effectiveSeatCount =>
+      _selectedSeatNumbers.isNotEmpty ? _selectedSeatNumbers.length : _seatCount;
+
+  /// Total fare currently being paid (unit price × seats).
+  num effectiveFareTotal() {
+    final effectivePrice =
+        _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
+    return effectivePrice * _effectiveSeatCount;
+  }
+
+  /// Everything-included customer total for a fare — mirrors the web
+  /// `ticketQuote({ticketPrice, depositMno, payoutMno: 'MTN'}).total_price`,
+  /// which is exactly what the server charges (`pricing.customerTotal`).
+  int _quoteTotal(num fare) {
+    if (fare <= 0) return 0;
+    return ticketQuote(
+      ticketPrice: fare,
+      depositMno: _depositMno,
+      payoutMno: 'MTN',
+    ).totalPrice;
+  }
+
+  /// Per-seat "everything included" price shown on agency rows — mirrors the
+  /// web `perSeatTotalFor`: the all-in quote for the current seat count,
+  /// divided back down to a single seat.
+  int _perSeatTotalFor(num price) {
+    final seats = _effectiveSeatCount > 1 ? _effectiveSeatCount : 1;
+    final fare = price * seats;
+    if (fare <= 0) return 0;
+    return (_quoteTotal(fare) / seats).round();
+  }
+
   // ── HELPERS ──
 
   Widget _buildLabel(String text, {TextStyle? style}) {
@@ -3510,13 +3929,20 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
-  Widget _buildSummaryRow(String label, String value, {bool isBold = false}) {
+  Widget _buildSummaryRow(
+    String label,
+    String value, {
+    bool isBold = false,
+    double? labelSize,
+    double? valueSize,
+  }) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(
           label,
           style: AppTypography.bodySmall.copyWith(
+            fontSize: labelSize,
             color: AppColors.textSub,
             fontWeight: isBold ? FontWeight.w700 : FontWeight.w400,
           ),
@@ -3524,6 +3950,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         Text(
           value,
           style: AppTypography.bodySmall.copyWith(
+            fontSize: valueSize,
             color: isBold ? AppColors.primary : AppColors.text,
             fontWeight: isBold ? FontWeight.w700 : FontWeight.w400,
           ),
@@ -3539,6 +3966,31 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     ];
     final l10n = AppLocalizations.of(context);
     return l10n.translate(keys[month]);
+  }
+
+  /// intl locale for date formatting, derived from the active app language.
+  String get _dateLocale =>
+      AppLocalizations.of(context).languageCode;
+
+  /// Formats a travel date like the web does — `Mon, Mar 5, 2026` (short
+  /// weekday + short month + day + year). Falls back to a fixed English pattern
+  /// if the locale's date symbols aren't available.
+  String _formatTravelDate(DateTime date) {
+    try {
+      return DateFormat.yMMMEd(_dateLocale).format(date);
+    } catch (_) {
+      return DateFormat('EEE, MMM d, y').format(date);
+    }
+  }
+
+  /// Localized narrow weekday letters, Monday-first (matches the web grid).
+  List<String> _weekdayNarrowLabels() {
+    try {
+      final fmt = DateFormat('EEEEE', _dateLocale);
+      return List.generate(7, (i) => fmt.format(DateTime(2024, 1, 1 + i)));
+    } catch (_) {
+      return const ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    }
   }
 
   String _normalizePhone(String input) {

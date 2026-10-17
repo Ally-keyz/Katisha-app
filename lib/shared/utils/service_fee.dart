@@ -1,261 +1,189 @@
-/// Katisha Service-Fee & Margin Pricing System - client mirror.
+/// Katisha Ticket Pricing Engine — client mirror.
 ///
-/// MUST stay identical to `frontend/src/utils/serviceFee.ts`. The backend is
-/// the source of truth for the amount actually charged; the client mirrors
-/// the same engine so the fee shown in the wizard matches exactly what is
-/// charged.
+/// MUST stay identical to `frontend/src/utils/serviceFee.ts` and
+/// `server/src/utils/serviceFee.ts`. The backend is the source of truth for
+/// the amount actually charged; the client mirrors the same engine so the
+/// price shown in the wizard matches exactly what is charged.
 ///
-/// The customer pays `Ticket Price + Service Fee`. Katisha keeps the service
-/// fee as revenue and must cover two transaction costs on every booking:
+/// Deterministic quote for a booking. Currency is RWF. The customer pays
+/// `total_price` to us through pawaPay (a DEPOSIT); pawaPay takes a deposit fee
+/// out of that total; the operator is paid EXACTLY the ticket price `T` (a
+/// PAYOUT) and pawaPay takes a payout fee for that. Whatever is left must be at
+/// least our service fee (3.5% of T):
 ///
-///   Deposit cost = 1% of (Ticket Price + Service Fee)
-///   Payout cost  = 1% of Ticket Price + 60 RWF
+///   total_price - deposit_fee - T (operator) - payout_fee >= service_fee
 ///
-/// Pricing rules:
-///  1. Every single ticket keeps its margin in a target band: 600-800 RWF on
-///     low-value tickets, then 1.5k / 2.5k / 3k on 50k / 70k / 90k+ journeys.
-///  2. The per-ticket fee is hard-capped at [maxFeePerTicket] so expensive
-///     fares never scare the customer away with a huge service fee.
-///  3. Multi-passenger discounts reduce the fee per seat, but the margin must
-///     never fall below [minMarginRate] of the ticket value (the discount
-///     floor).
+/// The customer's processing fee must cover BOTH the deposit fee and the payout
+/// fee. Because the deposit fee is charged on the whole total (including the
+/// service fee and the processing fee itself) the total is divided by
+/// (1 - deposit_rate) instead of just adding a percentage.
+///
+/// MONEY RULES (never change):
+///  - service_fee = round_half_up(T × serviceFeeRate); never discounted or waived.
+///  - operator_payout is always exactly T; never more, never less.
+///  - processing_fee = total_price − T − service_fee (covers deposit + payout),
+///    computed by subtraction so the three parts always add up exactly.
+///
+/// The JavaScript engine works on `double` arithmetic and rounds half up with
+/// `Math.floor(x + 0.5)`; every value here is kept as a double for parity and
+/// only rounded to whole RWF where the TypeScript does.
 library;
 
-class PricingConfig {
-  /// Deposit transaction cost as a fraction of the customer total.
-  final double depositRate;
+/// Supported mobile-money networks.
+enum Mno { mtn, airtel }
 
-  /// Payout transaction cost as a fraction of the ticket value.
-  final double payoutRate;
+/// Katisha ticket pricing configuration — mirrors TICKET_PRICING.
+class TicketPricingConfig {
+  /// Katisha service fee as a fraction of the ticket value.
+  final double serviceFeeRate;
 
-  /// Fixed payout cost in RWF per booking.
-  final double payoutFixed;
+  /// Deposit transaction cost as a fraction of the customer total, per network.
+  final Map<Mno, double> depositRate;
 
-  /// Margin target (RWF) for tickets below the first MARGIN_TARGET band.
-  final double lowValueMargin;
+  /// Payout transaction cost as a fraction of the ticket value, per network.
+  final Map<Mno, double> payoutRate;
 
-  /// Lowest acceptable margin as a fraction of the ticket value.
-  final double minMarginRate;
+  /// Fixed payout transaction cost in RWF, per network.
+  final Map<Mno, double> payoutFixed;
 
-  /// Fees are always rounded up to this step (RWF).
-  final double roundingStep;
-
-  /// Hard cap on the service fee added per ticket (RWF).
-  final double maxFeePerTicket;
-
-  const PricingConfig({
+  const TicketPricingConfig({
+    required this.serviceFeeRate,
     required this.depositRate,
     required this.payoutRate,
     required this.payoutFixed,
-    required this.lowValueMargin,
-    required this.minMarginRate,
-    required this.roundingStep,
-    required this.maxFeePerTicket,
   });
 }
 
-const PricingConfig defaultPricing = PricingConfig(
-  depositRate: 0.01,
-  payoutRate: 0.01,
-  payoutFixed: 60,
-  lowValueMargin: 700,
-  minMarginRate: 0.01,
-  roundingStep: 100,
-  maxFeePerTicket: 5500,
+/// CONFIG — update here if pawaPay rates change.
+///
+///   deposit_rate : MTN = 2.1% MTN + 1% pawaPay = 3.1%
+///                  AIRTEL = 1.5% Airtel + 1% pawaPay = 2.5%
+///   payout_fixed : MTN = 60 RWF, AIRTEL = 0 RWF
+///   payout_rate  : MTN = 1%, AIRTEL = 1%
+const TicketPricingConfig ticketPricing = TicketPricingConfig(
+  serviceFeeRate: 0.035,
+  depositRate: {Mno.mtn: 0.031, Mno.airtel: 0.025},
+  payoutRate: {Mno.mtn: 0.01, Mno.airtel: 0.01},
+  payoutFixed: {Mno.mtn: 60, Mno.airtel: 0},
 );
 
-/// Minimum Katisha margin per booking, keyed by ticket price (checked
-/// highest-first):
-///
-///   price >= 90k   -> 3,000 RWF
-///   price >= 70k   -> 2,500 RWF
-///   price >= 50k   -> 1,500 RWF
-///   otherwise      -> lowValueMargin (700 RWF - lands in 600-800 on cheap fares)
-const List<({int minPrice, int margin})> marginTargets = [
-  (minPrice: 90000, margin: 3000),
-  (minPrice: 70000, margin: 2500),
-  (minPrice: 50000, margin: 1500),
-];
-
-/// Margin target for a ticket price (band-based).
-double targetMarginFor(num ticketPrice, [PricingConfig cfg = defaultPricing]) {
-  final price = ticketPrice.toDouble();
-  for (final band in marginTargets) {
-    if (price >= band.minPrice) return band.margin.toDouble();
-  }
-  return cfg.lowValueMargin;
+/// Coerce an unknown network label to a supported MNO (defaults to MTN).
+Mno normalizeMno(String? value) {
+  return (value ?? '').trim().toUpperCase() == 'AIRTEL' ? Mno.airtel : Mno.mtn;
 }
 
-/// Effective minimum margin for a booking of [totalTicketValue] at a given
-/// ticket price: the price-band target, floored by [minMarginRate] of the
-/// total ticket value so a multi-passenger discount can never drag the margin
-/// percentage below the floor.
-double requiredMarginFor(num totalTicketValue, num ticketPrice,
-    [PricingConfig cfg = defaultPricing]) {
-  final value = totalTicketValue.toDouble();
-  final target = targetMarginFor(ticketPrice, cfg);
-  final floor = cfg.minMarginRate * value;
-  return target > floor ? target : floor;
+/// Map a stored payment method ('mom' | 'airtel' | 'mpesa') to its network.
+Mno mnoFromPaymentMethod(String? method) {
+  return normalizeMno((method ?? '').toLowerCase() == 'airtel' ? 'AIRTEL' : 'MTN');
 }
 
-/// Round a fee up to the nearest [step] (default 100 RWF).
-double roundFee(num fee, [num step = 100]) {
-  if (step <= 0) return fee.roundToDouble();
-  return ((fee / step).ceil() * step).toDouble();
+/// Round half up to the nearest whole RWF (`Math.floor(value + 0.5)`).
+int roundHalfUp(double value) => (value + 0.5).floor();
+
+/// Service fee = 3.5% of the ticket value, rounded half up.
+int serviceFeeFor(num ticketPrice,
+    [TicketPricingConfig config = ticketPricing]) {
+  return roundHalfUp((ticketPrice.toDouble()) * config.serviceFeeRate);
 }
 
-/// Katisha margin for a booking-level fee over a given total ticket value.
-///   Margin = (1 - depositRate) * Fee - (depositRate + payoutRate) * Value - payoutFixed
-double marginFor(num bookingFee, num totalTicketValue,
-    [PricingConfig cfg = defaultPricing]) {
-  final fee = bookingFee.toDouble();
-  final value = totalTicketValue.toDouble();
-  return (1 - cfg.depositRate) * fee -
-      (cfg.depositRate + cfg.payoutRate) * value -
-      cfg.payoutFixed;
-}
-
-/// Minimum booking fee required to keep a target margin on a total ticket value.
-///   Fee = (targetMargin + payoutFixed + (depositRate + payoutRate) * Value) / (1 - depositRate)
-double requiredFeeForMargin(num totalTicketValue,
-    [num targetMargin = 700, PricingConfig cfg = defaultPricing]) {
-  final value = totalTicketValue.toDouble();
-  final target = targetMargin.toDouble();
-  return (target +
-          cfg.payoutFixed +
-          (cfg.depositRate + cfg.payoutRate) * value) /
-      (1 - cfg.depositRate);
-}
-
-/// Single-ticket service fee, derived purely from the margin target and the
-/// per-ticket cap. Used as the pre-discount base for multi-passenger bookings
-/// and as the per-seat fee for display.
-double singleSeatFee(num ticketPrice, [PricingConfig cfg = defaultPricing]) {
-  final price = ticketPrice.toDouble();
-  final fee = roundFee(
-      requiredFeeForMargin(price, targetMarginFor(price, cfg), cfg),
-      cfg.roundingStep);
-  final capped = fee < cfg.maxFeePerTicket ? fee : cfg.maxFeePerTicket;
-  return capped;
-}
-
-/// Multi-passenger discount rate for a seat count (1 when no discount applies).
-double multiPassengerRate(num seats) {
-  final n = seats >= 1 ? seats.floor() : 1;
-  if (n <= 2) return 1;
-  for (final tier in multiPassengerRates) {
-    if (n >= tier.minSeats) return tier.rate;
-  }
-  return 1;
-}
-
-/// Multi-passenger discount tiers - bigger groups get a better per-seat fee.
-const List<({int minSeats, double rate})> multiPassengerRates = [
-  (minSeats: 6, rate: 0.65),
-  (minSeats: 5, rate: 0.72),
-  (minSeats: 4, rate: 0.78),
-  (minSeats: 3, rate: 0.85),
-];
-
-/// Full booking-level service fee for a ticket price and passenger count.
-double bookingServiceFee(num ticketPrice, num seats,
-    [PricingConfig cfg = defaultPricing]) {
-  final n = seats <= 0 ? 1 : seats.floor();
-  final price = ticketPrice.toDouble();
-  final totalValue = price * n;
-
-  final rate = multiPassengerRate(n);
-  final proposed = roundFee(singleSeatFee(price, cfg) * n * rate, cfg.roundingStep);
-  final minFee = roundFee(
-      requiredFeeForMargin(totalValue, requiredMarginFor(totalValue, price, cfg), cfg),
-      cfg.roundingStep);
-
-  final fee = proposed > minFee ? proposed : minFee;
-  final cap = cfg.maxFeePerTicket * n;
-  return fee < cap ? fee : cap;
-}
-
-/// Rwandan intercity journeys carry a flat 200 RWF system fee; every other
-/// journey type uses the margin-driven booking fee.
-double systemFeeFor(String? journeyType, num ticketPrice, num seats,
-    [PricingConfig cfg = defaultPricing]) {
-  if (journeyType == 'intercity') return intercityFlatFee;
-  return bookingServiceFee(ticketPrice, seats, cfg);
-}
-
-const double intercityFlatFee = 200;
-
-class PricingBreakdown {
+/// The deterministic quote for a booking — mirrors `ticketQuote`.
+class TicketQuote {
   final int ticketPrice;
-  final int seats;
-  final int totalTicketValue;
-  final int perTicketFee;
-  final double multiPassengerRate;
-  final int bookingFee;
-  final int depositCost;
-  final int payoutCost;
-  final int margin;
-  final int customerTotal;
-  final bool marginPass;
+  final int serviceFee;
+  final int processingFee;
+  final int totalPrice;
+  final String currency;
+  final Mno depositMno;
+  final Mno payoutMno;
+  final Settlement settlement;
 
-  const PricingBreakdown({
+  const TicketQuote({
     required this.ticketPrice,
-    required this.seats,
-    required this.totalTicketValue,
-    required this.perTicketFee,
-    required this.multiPassengerRate,
-    required this.bookingFee,
-    required this.depositCost,
-    required this.payoutCost,
-    required this.margin,
-    required this.customerTotal,
-    required this.marginPass,
+    required this.serviceFee,
+    required this.processingFee,
+    required this.totalPrice,
+    required this.currency,
+    required this.depositMno,
+    required this.payoutMno,
+    required this.settlement,
   });
 }
 
-/// Full pricing breakdown for a booking - used for validation, display & audit.
-PricingBreakdown pricingBreakdown(num ticketPrice, num seats,
-    [PricingConfig cfg = defaultPricing]) {
-  final n = seats <= 0 ? 1 : seats.floor();
+/// Settlement report — mirrors the `settlement` object of the TS quote.
+class Settlement {
+  final double depositFee;
+  final int operatorPayout;
+  final double payoutFee;
+  final double serviceFeeKept;
+  final bool serviceFeeProtected;
+
+  const Settlement({
+    required this.depositFee,
+    required this.operatorPayout,
+    required this.payoutFee,
+    required this.serviceFeeKept,
+    required this.serviceFeeProtected,
+  });
+}
+
+/// Full deterministic quote for a request. `ticketPrice` is the operator's
+/// total payable for the booking (unit price × seats). Throws
+/// [ArgumentError] when the price is missing, zero, negative or not a number.
+TicketQuote ticketQuote({
+  required num ticketPrice,
+  String? depositMno,
+  String? payoutMno,
+  TicketPricingConfig config = ticketPricing,
+}) {
   final price = ticketPrice.toDouble();
-  final totalValue = price * n;
-  final bookingFee = bookingServiceFee(price, n, cfg);
-  final customerTotal = totalValue + bookingFee;
-  final depositCost = (customerTotal * cfg.depositRate).round();
-  final payoutCost = (totalValue * cfg.payoutRate).round() + cfg.payoutFixed.round();
-  final margin = marginFor(bookingFee, totalValue, cfg);
+  if (!price.isFinite || price <= 0) {
+    throw ArgumentError('invalid ticket_price');
+  }
 
-  final required = requiredMarginFor(totalValue, price, cfg);
-  final achievableUnderCap = marginFor(cfg.maxFeePerTicket * n, totalValue, cfg);
-  final floor = required < achievableUnderCap ? required : achievableUnderCap;
+  final deposit = normalizeMno(depositMno);
+  final payout = normalizeMno(payoutMno);
 
-  return PricingBreakdown(
+  final serviceFee = roundHalfUp(price * config.serviceFeeRate);
+  final operatorPayout = price;
+  final payoutFee =
+      config.payoutFixed[payout]! + config.payoutRate[payout]! * price;
+  final depositRate = config.depositRate[deposit]!;
+
+  // Gross up so the deposit fee (charged on the whole total) still leaves the
+  // full service fee intact.
+  var totalPrice = ((price + serviceFee + payoutFee) / (1 - depositRate)).ceilToDouble();
+  var processingFee = totalPrice - price - serviceFee;
+
+  // Mandatory settlement check: bump the total by 1 RWF until the deposit and
+  // payout fees can never eat into the service fee.
+  var depositFee = depositRate * totalPrice;
+  var serviceFeeKept = totalPrice - depositFee - operatorPayout - payoutFee;
+  var guard = 0;
+  while (serviceFeeKept < serviceFee && guard < 1000) {
+    totalPrice += 1;
+    processingFee = totalPrice - price - serviceFee;
+    depositFee = depositRate * totalPrice;
+    serviceFeeKept = totalPrice - depositFee - operatorPayout - payoutFee;
+    guard += 1;
+  }
+
+  return TicketQuote(
     ticketPrice: price.round(),
-    seats: n,
-    totalTicketValue: totalValue.round(),
-    perTicketFee: singleSeatFee(price, cfg).round(),
-    multiPassengerRate: multiPassengerRate(n),
-    bookingFee: bookingFee.round(),
-    depositCost: depositCost,
-    payoutCost: payoutCost,
-    margin: margin.round(),
-    customerTotal: customerTotal.round(),
-    marginPass: margin >= floor,
+    serviceFee: serviceFee,
+    processingFee: processingFee.round(),
+    totalPrice: totalPrice.round(),
+    currency: 'RWF',
+    depositMno: deposit,
+    payoutMno: payout,
+    settlement: Settlement(
+      depositFee: _round2(depositFee),
+      operatorPayout: operatorPayout.round(),
+      payoutFee: _round2(payoutFee),
+      serviceFeeKept: _round2(serviceFeeKept),
+      serviceFeeProtected: serviceFeeKept >= serviceFee,
+    ),
   );
 }
 
-/// Full PawaPay processing fee - deposit cost + payout cost.
-///
-///   Deposit cost = depositRate * customerTotal  (PawaPay 1% + MTN 0.8791%)
-///   Payout cost  = payoutRate * ticketValue + payoutFixed  (PawaPay 1% + 60 RWF)
-int pawapayFee(num customerTotal, num ticketValue,
-    {double depositRate = 0.018791,
-    double payoutRate = 0.01,
-    double payoutFixed = 60}) {
-  final total = customerTotal.toDouble();
-  final ticket = ticketValue.toDouble();
-  if (total <= 0 && ticket <= 0) return 0;
-  final depositCost = (total * depositRate).round();
-  final payoutCost = (ticket * payoutRate).round() + payoutFixed.round();
-  return depositCost + payoutCost;
-}
+/// Round to 2 decimals for settlement reporting (`Math.round(v * 100) / 100`).
+double _round2(double value) => (value * 100).roundToDouble() / 100;

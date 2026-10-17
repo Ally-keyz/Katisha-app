@@ -13,7 +13,7 @@ import '../theme/app_typography.dart';
 const double kKatishaModalHeightFactor = 0.89;
 
 /// Shows a Katisha modal: a bottom sheet with a fixed height of
-/// [kKatishaModalHeightFactor] of the screen.
+/// [heightFactor] (defaults to [kKatishaModalHeightFactor]) of the screen.
 ///
 /// The panel is flush with the left, right and bottom edges — only the top two
 /// corners are rounded — so it reads as a sheet rising from the bottom rather
@@ -27,6 +27,7 @@ Future<T?> showKatishaModal<T>({
   String? barrierLabel,
   Duration transitionDuration = const Duration(milliseconds: 340),
   bool dark = false,
+  double heightFactor = kKatishaModalHeightFactor,
 }) {
   return showGeneralDialog<T>(
     context: context,
@@ -68,7 +69,7 @@ Future<T?> showKatishaModal<T>({
       final media = MediaQuery.of(ctx);
       final bottomInset = media.viewInsets.bottom;
       final availableHeight = media.size.height - bottomInset;
-      final panelHeight = availableHeight * kKatishaModalHeightFactor;
+      final panelHeight = availableHeight * heightFactor;
       return Padding(
         padding: EdgeInsets.only(bottom: bottomInset),
         child: Align(

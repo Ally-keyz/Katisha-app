@@ -214,6 +214,19 @@ class AppEn {
     'seats_needed': 'How many seats do you need?',
     '1_seat_selected': '1 seat selected',
     'n_seats_selected': '%d seats selected',
+    'at_least_one_seat': 'At least 1 seat',
+    'seat_blocked': 'Blocked',
+    'confirm_seats': 'Confirm seats',
+    'clear': 'Clear',
+    'seat_map_unavailable': 'Seat map is unavailable for this departure — choose how many seats you need.',
+    'no_seats_selected_yet': 'No seats selected yet',
+    'seats_selected_count': '%d seat(s) selected',
+    'select_your_seats': 'Select your seats',
+    'pick_seats_on_map': 'Pick your seat(s) on the bus map.',
+    'map_updating': 'Updating seats…',
+    'seat_was_taken': 'Seat %s was just taken, please choose another.',
+    'seats_were_taken': 'Seats %s were just taken, please choose another.',
+    'up_to_seats_per_booking': 'You can select up to %d seat(s) per booking.',
 
     // ── Booking Actions ──────────────────────────
     'continue_btn': 'Continue',
@@ -252,7 +265,6 @@ class AppEn {
     'select_pickup_point': 'Select a pickup point',
     'select_travel_date': 'Select travel date',
     'select_departure_time': 'Select departure time',
-    'at_least_one_seat': 'At least 1 seat',
     'select_payment_method': 'Select payment method',
     'phone_required': 'Phone number required',
     'no_routes': 'No routes found for this selection',
@@ -328,6 +340,13 @@ class AppEn {
     'done': 'Done',
     'payment_confirmed_msg': 'Payment Confirmed!',
     'payment_failed_title': 'Payment Failed',
+    'payment_confirmed_eyebrow': 'Payment confirmed',
+    'opening_ticket': 'Opening your ticket',
+    'payment_failed_eyebrow': 'Payment declined',
+    'payment_failed_next_title': 'What to do next',
+    'payment_failed_next_desc': 'Add money to your mobile money account, then try booking your trip again.',
+    'book_again': 'Book again',
+    'contact_support': 'Contact support',
 
     // ── Calendar Months ────────────────────────────
 

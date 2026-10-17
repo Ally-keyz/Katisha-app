@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'core/platform/notification_service.dart';
 import 'core/platform/platform_providers.dart';
 import 'core/theme/app_colors.dart';
@@ -13,6 +14,11 @@ import 'l10n/app_localizations.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Load date-formatting symbols for every supported locale so localized
+  // travel dates (e.g. "Thu, 5 Mar 2026" / "jeu. 5 mars 2026") render correctly
+  // regardless of the active language.
+  await initializeDateFormatting();
 
   // Cap the decoded-image cache so ticket PNGs and UI images can't balloon
   // memory. ~100 MB of decoded bitmaps is plenty for this app's screens.
