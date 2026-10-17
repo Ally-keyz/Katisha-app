@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 /// All hex values match the web frontend exactly.
 abstract final class AppColors {
   // ── Primary ──────────────────────────────────
-  static const Color primary = Color(0xFF1D4ED8);
-  static const Color primaryDark = Color(0xFF1E40AF);
+  static const Color primary = Color(0xFF0854AE);
+  static const Color primaryDark = Color(0xFF064187);
   static const Color primaryLight = Color(0xFFDBEAFE);
 
   // ── Info / Secondary ─────────────────────────
@@ -31,7 +31,7 @@ abstract final class AppColors {
   static const Color errorBorder = Color(0xFFFECACA);
   static const Color warning = Color(0xFFD97706);
   static const Color warningBg = Color(0xFFFFFBEB);
-  static const Color success = Color(0xFF1D4ED8);
+  static const Color success = Color(0xFF0854AE);
   static const Color successBg = Color(0xFFDBEAFE);
 
   // ── Booking Status ───────────────────────────
@@ -40,12 +40,12 @@ abstract final class AppColors {
   static const Color statusExpired = Color(0xFFDC2626);
   static const Color statusPaid = Color(0xFF0891B2);
   static const Color statusUploaded = Color(0xFF7C3AED);
-  static const Color statusDeparted = Color(0xFF1D4ED8);
-  static const Color statusCompleted = Color(0xFF1E40AF);
+  static const Color statusDeparted = Color(0xFF0854AE);
+  static const Color statusCompleted = Color(0xFF064187);
   static const Color statusCancelled = Color(0xFF6B7280);
 
   // ── Seat Map ─────────────────────────────────
-  static const Color seatAvailable = Color(0xFF1D4ED8);
+  static const Color seatAvailable = Color(0xFF0854AE);
   static const Color seatSelected = Color(0xFF10B981);
   static const Color seatTaken = Color(0xFF6B7280);
 

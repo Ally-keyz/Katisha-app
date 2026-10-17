@@ -19,7 +19,7 @@ import '../widgets/promoter_ui.dart';
 import 'promoter_settings_modal.dart';
 
 const _accentBlue = Color(0xFF3B82F6);
-const _primaryBlue = Color(0xFF2563EB);
+const _primaryBlue = Color(0xFF0960C8);
 const _mutedGrey = Color(0xFF9CA3AF);
 
 class PromoterDashboardScreen extends ConsumerStatefulWidget {
