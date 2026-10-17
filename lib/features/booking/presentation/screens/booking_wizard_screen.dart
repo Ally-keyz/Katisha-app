@@ -2281,8 +2281,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
         color: AppColors.white,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 6,
+            offset: const Offset(0, 1),
+          ),
+        ],
       ),
       child: Column(
         children: [
@@ -2350,16 +2356,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               final isSelected = date.year == _selectedDate.year &&
                   date.month == _selectedDate.month &&
                   date.day == _selectedDate.day;
+              final isToday = date.year == today.year &&
+                  date.month == today.month &&
+                  date.day == today.day;
 
+              // Only available dates are shown (unavailable days leave an empty
+              // cell, matching the web calendar).
               if (isUnavailable) {
-                return Center(
-                  child: Text(
-                    '$day',
-                    style: AppTypography.bodyMedium.copyWith(
-                      color: AppColors.textMuted.withValues(alpha: 0.4),
-                    ),
-                  ),
-                );
+                return const SizedBox.shrink();
               }
 
               return GestureDetector(
@@ -2376,19 +2380,37 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 },
                 child: Center(
                   child: Container(
-                    width: 36,
-                    height: 36,
+                    width: 38,
+                    height: 38,
                     decoration: BoxDecoration(
-                      color: isSelected ? AppColors.primary : null,
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                      color: isSelected
+                          ? AppColors.primary
+                          : isToday
+                              ? AppColors.primaryLight
+                              : null,
+                      borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+                      boxShadow: isSelected
+                          ? [
+                              BoxShadow(
+                                color: AppColors.primary.withValues(alpha: 0.45),
+                                blurRadius: 10,
+                                spreadRadius: -3,
+                                offset: const Offset(0, 3),
+                              ),
+                            ]
+                          : null,
                     ),
                     child: Center(
                       child: Text(
                         '$day',
                         style: AppTypography.bodyMedium.copyWith(
-                          color: isSelected ? AppColors.white : AppColors.text,
+                          color: isSelected
+                              ? AppColors.white
+                              : isToday
+                                  ? AppColors.primaryDark
+                                  : AppColors.text,
                           fontWeight:
-                              isSelected ? FontWeight.w700 : FontWeight.w400,
+                              isSelected ? FontWeight.w700 : FontWeight.w500,
                         ),
                       ),
                     ),
@@ -2485,17 +2507,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 child: Container(
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: isSelected ? AppColors.primary : AppColors.white,
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                    border: Border.all(
-                      color: isSelected ? AppColors.primary : AppColors.border,
-                      width: isSelected ? 2 : 1,
-                    ),
+                    color: isSelected ? AppColors.primary : AppColors.primaryLight,
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
                   ),
                   child: Text(
                     slot,
                     style: AppTypography.titleMedium.copyWith(
-                      color: isSelected ? AppColors.white : AppColors.text,
+                      color: isSelected ? AppColors.white : AppColors.primaryDark,
                       fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
                     ),
                   ),
