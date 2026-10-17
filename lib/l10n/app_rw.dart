@@ -32,8 +32,8 @@ class AppRw {
     'name_hint': 'Injiza izina ryose',
     'login_button': 'Injira',
     'register_button': 'Fungura Konti',
-    'choose_language': 'Hitamo ururimi',
-    'select_preferred_language': 'Hitamwo ururimi ushimye kugira ngo ukomeze',
+    'choose_language': 'Genda nk\'umusirimu, biroroshye.',
+    'select_preferred_language': 'Hitamo ururimi kugira ukomeze',
     'role_not_supported': 'Uru ruhare ntirushyigikiwe. Nyamuneka vugana n\'ubuyobozi bwa Katisha kugira ngo ubone ubufasha.',
     'welcome_to_katisha': 'Murakaza neza kuri Katisha',
 
@@ -178,7 +178,7 @@ class AppRw {
     // ── Journey Type Selection ─────────────────────
     'select_journey_type': 'Hitamo ubwoko bw\'urugendo',
     'what_kind_of_trip': 'Hitamo ubwoko bw\'urugendo rwawe',
-    'plan_your_trip': 'Tegura urugendo rwawe',
+    'plan_your_trip': 'Genda nk\'umusirimu, biroroshye.',
     'choose_journey_type_desc': 'Urugendo rwo hagati mu Rwanda, cyangwa urugendo rw\'Iburasirazuba bwa Afrika',
     'choose_route_and_time': 'Hitamo inzira yawe n\'igihe cyo kugenda',
     'intercity': 'Urugendo rwo hagati mu Rwanda',

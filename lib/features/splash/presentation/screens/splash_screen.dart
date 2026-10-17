@@ -24,7 +24,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
 
   /// Loads persisted tokens and navigates immediately when done. A signed-in
   /// promoter goes straight to their dashboard; everyone else lands on the
-  /// welcome screen as before.
+  /// language selection screen.
   Future<void> _bootstrap() async {
     final apiClient = ref.read(apiClientProvider);
     await apiClient.init();
@@ -42,7 +42,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
         return;
       }
     }
-    context.go('/welcome');
+    context.go('/onboarding');
   }
 
   @override

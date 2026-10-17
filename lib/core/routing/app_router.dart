@@ -7,7 +7,6 @@ import '../../l10n/app_localizations.dart';
 import '../platform/badge_counts.dart';
 
 import '../../features/splash/presentation/screens/splash_screen.dart';
-import '../../features/welcome/presentation/screens/welcome_screen.dart';
 import '../../features/onboarding/presentation/screens/onboarding_screen.dart';
 import '../../features/my_bookings/presentation/screens/my_bookings_screen.dart';
 import '../../features/notifications/presentation/screens/notifications_screen.dart';
@@ -34,10 +33,6 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/splash',
         builder: (context, state) => const SplashScreen(),
-      ),
-      GoRoute(
-        path: '/welcome',
-        builder: (context, state) => const WelcomeScreen(),
       ),
       GoRoute(
         path: '/onboarding',

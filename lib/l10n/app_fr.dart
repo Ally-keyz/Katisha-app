@@ -35,7 +35,7 @@ class AppFr {
     'name_hint': 'Entrez votre nom complet',
     'login_button': 'Se connecter',
     'register_button': 'Créer un compte',
-    'choose_language': 'Choisissez votre langue',
+    'choose_language': 'Voyagez comme un roi',
     'select_preferred_language': 'Sélectionnez votre langue préférée pour continuer',
     'role_not_supported': "Ce rôle de compte n'est pas pris en charge sur mobile.",
     'welcome_to_katisha': 'Bienvenue sur Katisha',
@@ -155,7 +155,7 @@ class AppFr {
     // ── Journey Type Selection ─────────────────────
     'select_journey_type': 'Sélectionnez un type de voyage',
     'what_kind_of_trip': 'Quel type de voyage ?',
-    'plan_your_trip': 'Planifiez votre voyage',
+    'plan_your_trip': 'Voyagez comme un roi',
     'choose_journey_type_desc': 'Voyage interurbain au Rwanda, ou voyage en Afrique de l\'Est',
     'choose_route_and_time': 'Choisissez votre itinéraire et l\'heure de départ',
     'intercity': 'Voyage interurbain',

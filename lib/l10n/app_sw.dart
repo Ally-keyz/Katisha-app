@@ -35,7 +35,7 @@ class AppSw {
     'name_hint': 'Weka jina lako kamili',
     'login_button': 'Ingia',
     'register_button': 'Unda Akaunti',
-    'choose_language': 'Chagua lugha yako',
+    'choose_language': 'Safiri kama mfalme',
     'select_preferred_language': 'Chagua lugha unayopendelea kuendelea',
     'role_not_supported': 'Jukumu hili la akaunti halitumiki kwenye simu.',
     'welcome_to_katisha': 'Karibu kwenye Katisha',
@@ -155,7 +155,7 @@ class AppSw {
     // ── Journey Type Selection ─────────────────────
     'select_journey_type': 'Chagua aina ya safari',
     'what_kind_of_trip': 'Chagua aina ya safari yako',
-    'plan_your_trip': 'Panga safari yako',
+    'plan_your_trip': 'Safiri kama mfalme',
     'choose_journey_type_desc': 'Usafiri ndani ya Rwanda, au usafiri wa Afrika Mashariki',
     'choose_route_and_time': 'Chagua njia yako na wakati wa kuondoka',
     'intercity': 'Usafiri ndani ya Rwanda',
