@@ -89,6 +89,7 @@ class AppEn {
     'no_bookings': 'No tickets yet',
     'no_tickets_subtitle': 'Book your first trip and your tickets will appear here',
     'book_your_ticket': 'Book a Ticket',
+    'on_promotion': 'On promotion',
     'track_booking': 'Track Booking',
     'reference_code': 'Reference',
     'booking_status': 'Status',

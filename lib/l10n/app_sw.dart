@@ -92,6 +92,7 @@ class AppSw {
     'no_bookings': 'Bado hakuna tiketi',
     'no_tickets_subtitle': 'Hifadhi safari yako ya kwanza na tiketi zako zitaonekana hapa',
     'book_your_ticket': 'Nunua Tiketi',
+    'on_promotion': 'Kwenye ofa',
     'track_booking': 'Fuatilia Uhifadhi',
     'reference_code': 'Nambari ya Kumbukumbu',
     'booking_status': 'Hali',

@@ -112,6 +112,7 @@ class AppRw {
     'no_bookings': 'Ntamaticket abanonetse',
     'no_tickets_subtitle': 'Gura itike yawe ya mbere n\'amaticket yawe azaboneka hano',
     'book_your_ticket': 'Gura itike',
+    'on_promotion': 'Ibiciro biri kuri promotion',
     'track_booking': 'Kurikirana itike yawe',
     'reference_code': 'Inomero y\'Itike',
     'booking_status': 'Status y\'Itike',

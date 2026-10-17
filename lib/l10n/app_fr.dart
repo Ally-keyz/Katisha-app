@@ -92,6 +92,7 @@ class AppFr {
     'no_bookings': 'Aucun billet pour le moment',
     'no_tickets_subtitle': 'Réservez votre premier voyage et vos billets apparaîtront ici',
     'book_your_ticket': 'Réserver un billet',
+    'on_promotion': 'En promotion',
     'track_booking': 'Suivre la réservation',
     'reference_code': 'Référence',
     'booking_status': 'Statut',

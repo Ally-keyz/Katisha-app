@@ -39,7 +39,7 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
   int _page = 1;
   bool _hasMore = true;
   List<Booking> _bookings = [];
-  bool _loading = true;
+  bool _loading = false;
   String? _error;
 
   MyBookingsRepository get _repo => ref.read(_myBookingsRepoProvider);
@@ -94,6 +94,27 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
     } else {
       setState(() => _loading = true);
     }
+
+    // If the user is not signed in, don't hit the API (it would return a
+    // "session expired" error and leave the screen spinning); just show the
+    // tickets cached locally so guests still see anything they booked.
+    if (!ref.read(apiClientProvider).isAuthenticated) {
+      final localStore = ref.read(localTicketStoreProvider);
+      final cached = await localStore.getCachedBookings();
+      if (!mounted) return;
+      final cachedBookings = cached
+          .map((json) => Booking.fromJson(json))
+          .where((b) => _isIssued(b) && _isNonExpired(b))
+          .toList();
+      setState(() {
+        _bookings = cachedBookings;
+        _hasMore = false;
+        _loading = false;
+        _error = null;
+      });
+      return;
+    }
+
     final result = await _repo.getMyBookings(_page, 50);
     if (!mounted) return;
     result.fold(

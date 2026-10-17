@@ -56,6 +56,9 @@ class RouteModel {
   final String destination;
   final int price;
   final int? effectivePrice;
+  final int? originalPrice;
+  final bool promotionActive;
+  final String? promotionLabel;
   final List<RouteStop> stops;
   final List<String> provinces;
   final List<String> countries;
@@ -71,6 +74,9 @@ class RouteModel {
     required this.destination,
     required this.price,
     this.effectivePrice,
+    this.originalPrice,
+    this.promotionActive = false,
+    this.promotionLabel,
     this.stops = const [],
     this.provinces = const [],
     this.countries = const [],
@@ -78,6 +84,13 @@ class RouteModel {
     this.departureTimes = const [],
     required this.status,
   });
+
+  /// The fare a rider actually pays before fees (falls back to [price]).
+  int get routePrice => effectivePrice ?? price;
+
+  /// True when an active promotion discounts this route below its original fare.
+  bool get hasPromotion =>
+      promotionActive && originalPrice != null && originalPrice! > routePrice;
 
   factory RouteModel.fromJson(Map<String, dynamic> json) {
     final agencyData = json['agency'];
@@ -91,6 +104,9 @@ class RouteModel {
       destination: json['destination'] as String? ?? '',
       price: json['price'] as int? ?? 0,
       effectivePrice: json['effectivePrice'] as int?,
+      originalPrice: json['originalPrice'] as int?,
+      promotionActive: json['promotionActive'] as bool? ?? false,
+      promotionLabel: json['promotionLabel'] as String?,
       stops: (json['stops'] as List<dynamic>?)
               ?.map((s) => RouteStop.fromJson(s as Map<String, dynamic>))
               .toList() ??
@@ -120,6 +136,9 @@ class RouteModel {
         'destination': destination,
         'price': price,
         'effectivePrice': effectivePrice,
+        'originalPrice': originalPrice,
+        'promotionActive': promotionActive,
+        'promotionLabel': promotionLabel,
         'stops': stops.map((s) => s.toJson()).toList(),
         'provinces': provinces,
         'countries': countries,

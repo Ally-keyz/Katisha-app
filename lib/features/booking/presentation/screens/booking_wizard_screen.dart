@@ -1824,13 +1824,17 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     BuildContext sheetCtx,
     StateSetter setSheetState,
   ) {
+    final l10n = AppLocalizations.of(context);
     final isSelected = _selectedRoute?.id == route.id;
-    final effectivePrice = route.effectivePrice ?? route.price;
-    final serviceFee = systemFeeFor(route.type, effectivePrice, 1).round();
-    final onlineFee = (effectivePrice * _payoutRate).round() + _payoutFixed;
-    final total = effectivePrice + serviceFee + onlineFee;
-    final hasDiscount =
-        route.effectivePrice != null && route.effectivePrice != route.price;
+    final routePrice = route.routePrice as int;
+    final serviceFee = systemFeeFor(route.type, routePrice, 1).round();
+    final onlineFee = (routePrice * _payoutRate).round() + _payoutFixed;
+    final total = routePrice + serviceFee + onlineFee;
+    final hasPromo = route.hasPromotion == true;
+    final originalPrice = (route.originalPrice as int?) ?? routePrice;
+    final originalTotal = originalPrice +
+        systemFeeFor(route.type, originalPrice, 1).round() +
+        ((originalPrice * _payoutRate).round() + _payoutFixed);
     final name = route.agency.name;
 
     return InkWell(
@@ -1880,14 +1884,28 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    name,
-                    style: AppTypography.bodyLarge.copyWith(
-                      fontWeight:
-                          isSelected ? FontWeight.w700 : FontWeight.w600,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          name,
+                          style: AppTypography.bodyLarge.copyWith(
+                            fontWeight:
+                                isSelected ? FontWeight.w700 : FontWeight.w600,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (hasPromo) ...[
+                        const SizedBox(width: 4),
+                        const Icon(
+                          Icons.star,
+                          size: 13,
+                          color: Color(0xFFF59E0B),
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -1905,23 +1923,36 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text(
-                  '${_formatAmount(total)} RWF',
-                  style: AppTypography.titleSmall.copyWith(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                if (hasDiscount) ...[
-                  const SizedBox(height: 2),
+                if (hasPromo) ...[
                   Text(
-                    '${_formatAmount(route.price)} RWF',
+                    '${_formatAmount(originalTotal)} RWF',
                     style: AppTypography.labelSmall.copyWith(
                       color: AppColors.textMuted,
                       decoration: TextDecoration.lineThrough,
                     ),
                   ),
-                ],
+                  Text(
+                    '${_formatAmount(total)} RWF',
+                    style: AppTypography.titleSmall.copyWith(
+                      color: AppColors.error,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    l10n.translate('on_promotion'),
+                    style: AppTypography.labelSmall.copyWith(
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ] else
+                  Text(
+                    '${_formatAmount(total)} RWF',
+                    style: AppTypography.titleSmall.copyWith(
+                      color: AppColors.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
               ],
             ),
             const SizedBox(width: AppSpacing.sm),
@@ -2624,7 +2655,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             ),
           ],
         ),
-        const SizedBox(height: AppSpacing.xl),
+        const SizedBox(height: AppSpacing.xxl),
 
         // Amount display
         Container(

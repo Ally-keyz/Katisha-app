@@ -277,9 +277,9 @@ class _RouteCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final effectivePrice = route.effectivePrice ?? route.price;
-    final hasDiscount =
-        route.effectivePrice != null && route.effectivePrice != route.price;
+    final routePrice = route.routePrice;
+    final hasPromo = route.hasPromotion;
+    final originalPrice = route.originalPrice ?? routePrice;
 
     return Container(
       decoration: BoxDecoration(
@@ -311,12 +311,25 @@ class _RouteCard extends StatelessWidget {
                     borderRadius:
                         BorderRadius.circular(AppSpacing.radiusFull),
                   ),
-                  child: Text(
-                    route.agency.name,
-                    style: AppTypography.labelSmall.copyWith(
-                      color: AppColors.primary,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        route.agency.name,
+                        style: AppTypography.labelSmall.copyWith(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (hasPromo) ...[
+                        const SizedBox(width: 3),
+                        const Icon(
+                          Icons.star,
+                          size: 11,
+                          color: Color(0xFFF59E0B),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
                 const Spacer(),
@@ -401,22 +414,43 @@ class _RouteCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.sm),
             Row(
               children: [
-                Text(
-                  '${_moneyFormat.format(effectivePrice)} RWF',
-                  style: AppTypography.titleLarge.copyWith(
-                    color: AppColors.primary,
-                  ),
-                ),
-                if (hasDiscount) ...[
-                  const SizedBox(width: AppSpacing.sm),
-                  Text(
-                    '${_moneyFormat.format(route.price)} RWF',
-                    style: AppTypography.bodySmall.copyWith(
-                      color: AppColors.textMuted,
-                      decoration: TextDecoration.lineThrough,
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          '${_moneyFormat.format(routePrice)} RWF',
+                          style: AppTypography.titleLarge.copyWith(
+                            color: hasPromo
+                                ? AppColors.error
+                                : AppColors.primary,
+                          ),
+                        ),
+                        if (hasPromo) ...[
+                          const SizedBox(width: AppSpacing.sm),
+                          Text(
+                            '${_moneyFormat.format(originalPrice)} RWF',
+                            style: AppTypography.bodySmall.copyWith(
+                              color: AppColors.textMuted,
+                              decoration: TextDecoration.lineThrough,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
-                  ),
-                ],
+                    if (hasPromo)
+                      Text(
+                        AppLocalizations.of(context)
+                            .translate('on_promotion'),
+                        style: AppTypography.labelSmall.copyWith(
+                          color: AppColors.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                  ],
+                ),
                 const Spacer(),
                 FilledButton(
                   onPressed: onBook,
