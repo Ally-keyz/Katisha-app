@@ -26,7 +26,6 @@ Future<T?> showKatishaModal<T>({
   Color? barrierColor,
   String? barrierLabel,
   Duration transitionDuration = const Duration(milliseconds: 340),
-  bool dark = false,
 }) {
   return showGeneralDialog<T>(
     context: context,
@@ -74,7 +73,7 @@ Future<T?> showKatishaModal<T>({
         child: Align(
           alignment: Alignment.bottomCenter,
           child:           Material(
-            color: dark ? const Color(0xFF141414) : AppColors.white,
+            color: AppColors.white,
             borderRadius: const BorderRadius.vertical(
               top: Radius.circular(AppSpacing.radiusXl),
             ),
@@ -113,9 +112,6 @@ class KatishaModal extends StatelessWidget {
   /// Lets the body own its scrolling. Set false when [child] already scrolls.
   final bool bodyScrollable;
 
-  /// Renders the sheet in the dark promoter theme.
-  final bool dark;
-
   const KatishaModal({
     super.key,
     required this.title,
@@ -125,7 +121,6 @@ class KatishaModal extends StatelessWidget {
     this.onClose,
     this.closeLabel = 'Close',
     this.bodyScrollable = true,
-    this.dark = false,
   });
 
   @override
@@ -149,7 +144,6 @@ class KatishaModal extends StatelessWidget {
                   title,
                   style: AppTypography.titleLarge.copyWith(
                     fontWeight: FontWeight.w700,
-                    color: dark ? Colors.white : null,
                   ),
                 ),
                 if (subtitle != null && subtitle!.isNotEmpty) ...[
@@ -157,7 +151,7 @@ class KatishaModal extends StatelessWidget {
                   Text(
                     subtitle!,
                     style: AppTypography.bodySmall.copyWith(
-                      color: dark ? const Color(0xFF9CA3AF) : AppColors.textSub,
+                      color: AppColors.textSub,
                     ),
                   ),
                 ],
@@ -169,9 +163,9 @@ class KatishaModal extends StatelessWidget {
             onPressed: onClose ?? () => Navigator.of(context).maybePop(),
             tooltip: closeLabel,
             icon: const Icon(Icons.close, size: 20),
-            color: dark ? const Color(0xFF9CA3AF) : AppColors.textSub,
+            color: AppColors.textSub,
             style: IconButton.styleFrom(
-              backgroundColor: dark ? const Color(0xFF27272A) : AppColors.surfaceVariant,
+              backgroundColor: AppColors.surfaceVariant,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
               ),
@@ -212,11 +206,11 @@ class KatishaModal extends StatelessWidget {
       mainAxisSize: MainAxisSize.max,
       children: [
         header,
-        Divider(height: 1, color: dark ? const Color(0xFF27272A) : AppColors.border),
+        Divider(height: 1, color: AppColors.border),
         body,
         if (footer != null) ...[
-          Divider(height: 1, color: dark ? const Color(0xFF27272A) : AppColors.border),
-          Container(color: dark ? const Color(0xFF141414) : AppColors.white, child: footer),
+          Divider(height: 1, color: AppColors.border),
+          Container(color: AppColors.white, child: footer),
         ],
       ],
     );

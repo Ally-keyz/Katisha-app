@@ -7,7 +7,6 @@ import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../l10n/app_localizations.dart';
-import '../../../auth/application/auth_controller.dart';
 
 class OnboardingScreen extends ConsumerStatefulWidget {
   const OnboardingScreen({super.key});
@@ -117,34 +116,6 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 ),
               ),
               const Spacer(),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.lg,
-                  0,
-                  AppSpacing.lg,
-                  AppSpacing.lg,
-                ),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: _openPromoter,
-                    icon: const Icon(Icons.campaign_outlined, size: 20),
-                    label: Text(l10n.translate('make_money_katisha')),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.primary,
-                      side: const BorderSide(color: AppColors.primary, width: 1.5),
-                      minimumSize: const Size.fromHeight(52),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                      ),
-                      textStyle: AppTypography.buttonMedium.copyWith(
-                        color: AppColors.primary,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
             ],
           ),
         ),
@@ -197,22 +168,5 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
     if (!mounted) return;
     context.go('/home');
-  }
-
-  /// Sends the user to whichever promoter screen fits their account.
-  ///
-  /// The language page is now the app entry point, so no screen has resolved
-  /// the stored session yet. Resolve it here (once) so an existing promoter
-  /// lands straight on the dashboard instead of being shown the setup form.
-  Future<void> _openPromoter() async {
-    ref.read(soundServiceProvider).playClick();
-
-    final auth = ref.read(authControllerProvider);
-    final user = auth is AuthSignedIn
-        ? auth.user
-        : await ref.read(authControllerProvider.notifier).restore();
-    if (!mounted) return;
-
-    context.go(user != null && user.isPromoter ? '/promoter' : '/promoter/setup');
   }
 }

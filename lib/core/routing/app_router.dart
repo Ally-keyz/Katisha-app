@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../features/auth/application/auth_controller.dart';
 import '../../l10n/app_localizations.dart';
 import '../platform/badge_counts.dart';
 
@@ -14,12 +13,6 @@ import '../../features/booking/presentation/screens/booking_wizard_screen.dart';
 import '../../features/booking/presentation/screens/route_search_results_screen.dart';
 import '../../features/booking/presentation/screens/payment_waiting_screen.dart';
 import '../../features/ticket/presentation/screens/ticket_view_screen.dart';
-import '../../features/promoter/presentation/screens/promoter_dashboard_screen.dart';
-import '../../features/promoter/presentation/screens/promoter_earnings_screen.dart';
-import '../../features/promoter/presentation/screens/promoter_referrals_screen.dart';
-import '../../features/promoter/presentation/screens/promoter_setup_screen.dart';
-import '../../features/promoter/presentation/screens/promoter_payouts_screen.dart';
-import '../../features/promoter/presentation/widgets/promoter_gate.dart';
 
 final rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -39,7 +32,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (context, state) => const OnboardingScreen(),
       ),
 
-      // ── User role routes (bottom nav shell) ──────
+      // ── User role routes (bottom nav shell) ──────────────────────────────
       ShellRoute(
         builder: (context, state, child) => UserHomeShell(child: child),
         routes: [
@@ -61,44 +54,10 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               child: NotificationsScreen(),
             ),
           ),
-          // ── Promoter (tab; the gate handles non-promoter accounts) ──
-          GoRoute(
-            path: '/promoter',
-            pageBuilder: (context, state) => const NoTransitionPage(
-              child: PromoterGate(child: PromoterDashboardScreen()),
-            ),
-          ),
         ],
       ),
 
-      // ── Promoter onboarding ──
-      // Kept outside the shell so a signed-out visitor can apply directly.
-      GoRoute(
-        path: '/promoter/setup',
-        builder: (context, state) => const PromoterSetupScreen(),
-      ),
-
-      // ── Promoter ledgers (full-screen drill-downs) ─
-      GoRoute(
-        path: '/promoter/earnings',
-        builder: (context, state) => const PromoterGate(
-          child: PromoterEarningsScreen(),
-        ),
-      ),
-      GoRoute(
-        path: '/promoter/referrals',
-        builder: (context, state) => const PromoterGate(
-          child: PromoterReferralsScreen(),
-        ),
-      ),
-      GoRoute(
-        path: '/promoter/payouts',
-        builder: (context, state) => const PromoterGate(
-          child: PromoterPayoutsScreen(),
-        ),
-      ),
-
-      // ── Booking flow (full-screen, no bottom nav) ─
+      // ── Booking flow (full-screen, no bottom nav) ────────────────────────
       GoRoute(
         path: '/book',
         builder: (context, state) {
@@ -135,52 +94,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 });
 
 /// Shell widget for the User role with bottom navigation.
-class UserHomeShell extends ConsumerStatefulWidget {
+class UserHomeShell extends ConsumerWidget {
   final Widget child;
   const UserHomeShell({super.key, required this.child});
 
   @override
-  ConsumerState<UserHomeShell> createState() => _UserHomeShellState();
-}
-
-class _UserHomeShellState extends ConsumerState<UserHomeShell> {
-  /// See the guard in [build]: keeps the invalid-location redirect to one
-  /// post-frame callback instead of one per rebuild.
-  bool _redirected = false;
-
-  @override
-  void initState() {
-    super.initState();
-    // Resolve any stored session so `isPromoterProvider` can decide whether the
-    // promoter tab belongs in the bar. Without this the tab could never appear:
-    // nothing else resolves the session until /promoter is opened.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      ref.read(authControllerProvider.notifier).restore();
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final paths = _visiblePaths(ref);
+  Widget build(BuildContext context, WidgetRef ref) {
+    final paths = _userPaths;
     final currentIndex = _getCurrentIndex(context, paths);
-    // A deep link (or a stale tab state) can land on /promoter with an account
-    // that has no promoter role. Send them somewhere valid instead of showing a
-    // blank tab.
-    if (currentIndex < 0) {
-      // Guarded so this fires once per invalid location instead of queueing a
-      // fresh post-frame callback (and another `go`) on every rebuild.
-      if (!_redirected) {
-        _redirected = true;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (context.mounted) context.go('/home');
-        });
-      }
-    } else {
-      _redirected = false;
-    }
 
     return Scaffold(
-      body: widget.child,
+      body: child,
       bottomNavigationBar: _buildBottomNav(
         context: context,
         currentIndex: currentIndex < 0 ? 0 : currentIndex,
@@ -188,16 +112,6 @@ class _UserHomeShellState extends ConsumerState<UserHomeShell> {
         ref: ref,
       ),
     );
-  }
-
-  /// `/promoter` is always in the tab bar.
-  ///
-  /// Hiding it behind the promoter role meant a plain account had no way to
-  /// discover or start the setup flow, so the feature looked missing entirely.
-  /// [PromoterGate] decides what the tab renders: the dashboard for a promoter,
-  /// the setup form for a signed-in non-promoter, sign-in options otherwise.
-  static List<String> _visiblePaths(WidgetRef ref) {
-    return const [..._userPaths, _promoterPath];
   }
 
   static int _getCurrentIndex(BuildContext context, List<String> paths) {
@@ -218,119 +132,59 @@ Widget _buildBottomNav({
   // Resolved once: this runs on every shell rebuild, and each destination used
   // to do its own Localizations lookup.
   final l10n = AppLocalizations.of(context);
-  // The promoter dashboard is dark, so only on that tab does the nav go dark.
-  // Setup, sign-in and signed-out states share the same /promoter route, so
-  // also require a signed-in promoter before darkening.
-  final auth = ref.watch(authControllerProvider);
-  final isPromoterDashboard = GoRouterState.of(context).matchedLocation ==
-          _promoterPath &&
-      auth is AuthSignedIn &&
-      auth.user.isPromoter;
-  final dark = isPromoterDashboard;
 
-  return Container(
-    decoration: BoxDecoration(
-      color: dark ? Colors.black : Colors.white,
-    ),
-    child: dark
-        ? Theme(
-            data: Theme.of(context).copyWith(
-              navigationBarTheme: NavigationBarThemeData(
-                iconTheme: WidgetStateProperty.resolveWith(
-                  (states) => IconThemeData(
-                    color: states.contains(WidgetState.selected)
-                        ? const Color(0xFF3B82F6)
-                        : const Color(0xFF9CA3AF),
-                  ),
-                ),
-              ),
-            ),
-            child: _buildNavBar(context, currentIndex, paths, l10n, dark, badgeCounts),
-          )
-        : _buildNavBar(context, currentIndex, paths, l10n, dark, badgeCounts),
-  );
-}
-
-Widget _buildNavBar(
-  BuildContext context,
-  int currentIndex,
-  List<String> paths,
-  dynamic l10n,
-  bool dark,
-  dynamic badgeCounts,
-) {
   return NavigationBar(
-      selectedIndex: currentIndex,
-      onDestinationSelected: (index) => context.go(paths[index]),
-      backgroundColor: dark ? Colors.black : Colors.white,
-      elevation: 0,
-      labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-      indicatorColor: dark ? const Color(0x330960C8) : const Color(0xFFDBEAFE),
-      indicatorShape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(4),
+    selectedIndex: currentIndex,
+    onDestinationSelected: (index) => context.go(paths[index]),
+    backgroundColor: Colors.white,
+    elevation: 0,
+    labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+    indicatorColor: const Color(0xFFDBEAFE),
+    indicatorShape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(4),
+    ),
+    surfaceTintColor: Colors.transparent,
+    destinations: [
+      NavigationDestination(
+        icon: const Icon(Icons.home_outlined),
+        selectedIcon: const Icon(Icons.home),
+        label: l10n.translate('nav_home'),
       ),
-      surfaceTintColor: Colors.transparent,
-      labelTextStyle: dark
-          ? WidgetStateProperty.resolveWith(
-              (states) => TextStyle(
-                color: states.contains(WidgetState.selected)
-                    ? const Color(0xFF3B82F6)
-                    : const Color(0xFF9CA3AF),
-                fontSize: 12,
-                fontWeight: states.contains(WidgetState.selected)
-                    ? FontWeight.w600
-                    : FontWeight.w400,
-              ),
-            )
-          : null,
-      destinations: [
-        NavigationDestination(
-          icon: const Icon(Icons.home_outlined),
-          selectedIcon: const Icon(Icons.home),
-          label: l10n.translate('nav_home'),
+      NavigationDestination(
+        icon: _BadgeIcon(
+          icon: Icons.confirmation_num_outlined,
+          selectedIcon: Icons.confirmation_num,
+          selected: false,
+          count: badgeCounts.ticketCount,
+          color: const Color(0xFF0854AE),
         ),
-        NavigationDestination(
-          icon: _BadgeIcon(
-            icon: Icons.confirmation_num_outlined,
-            selectedIcon: Icons.confirmation_num,
-            selected: false,
-            count: badgeCounts.ticketCount,
-            color: const Color(0xFF0854AE),
-          ),
-          selectedIcon: _BadgeIcon(
-            icon: Icons.confirmation_num_outlined,
-            selectedIcon: Icons.confirmation_num,
-            selected: true,
-            count: badgeCounts.ticketCount,
-            color: const Color(0xFF0854AE),
-          ),
-          label: l10n.translate('nav_my_tickets'),
+        selectedIcon: _BadgeIcon(
+          icon: Icons.confirmation_num_outlined,
+          selectedIcon: Icons.confirmation_num,
+          selected: true,
+          count: badgeCounts.ticketCount,
+          color: const Color(0xFF0854AE),
         ),
-        NavigationDestination(
-          icon: _BadgeIcon(
-            icon: Icons.notifications_outlined,
-            selectedIcon: Icons.notifications,
-            selected: false,
-            count: badgeCounts.notificationCount,
-            color: Colors.red,
-          ),
-          selectedIcon: _BadgeIcon(
-            icon: Icons.notifications_outlined,
-            selectedIcon: Icons.notifications,
-            selected: true,
-            count: badgeCounts.notificationCount,
-            color: Colors.red,
-          ),
-          label: l10n.translate('nav_alerts'),
+        label: l10n.translate('nav_my_tickets'),
+      ),
+      NavigationDestination(
+        icon: _BadgeIcon(
+          icon: Icons.notifications_outlined,
+          selectedIcon: Icons.notifications,
+          selected: false,
+          count: badgeCounts.notificationCount,
+          color: Colors.red,
         ),
-        // Only present when _visiblePaths included it.
-        if (paths.contains(_promoterPath))
-          NavigationDestination(
-            icon: const Icon(Icons.campaign_outlined),
-            selectedIcon: const Icon(Icons.campaign),
-            label: l10n.translate('nav_promoter'),
-          ),
-      ],
+        selectedIcon: _BadgeIcon(
+          icon: Icons.notifications_outlined,
+          selectedIcon: Icons.notifications,
+          selected: true,
+          count: badgeCounts.notificationCount,
+          color: Colors.red,
+        ),
+        label: l10n.translate('nav_alerts'),
+      ),
+    ],
   );
 }
 
@@ -392,4 +246,3 @@ class _BadgeIcon extends StatelessWidget {
 }
 
 const _userPaths = ['/home', '/my-bookings', '/notifications'];
-const _promoterPath = '/promoter';

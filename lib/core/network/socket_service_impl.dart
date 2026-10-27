@@ -79,10 +79,6 @@ class SocketServiceImpl implements SocketService {
       }
     });
 
-    _socket!.on('promoter:link-click', (data) {
-      _eventController.add(SocketEvent(name: 'promoter:link-click', data: data));
-    });
-
     _socket!.on('new_booking', (data) {
       if (data is Map<String, dynamic>) {
         _newBookingController.add(data);
