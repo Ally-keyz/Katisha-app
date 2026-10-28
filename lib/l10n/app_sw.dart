@@ -250,6 +250,7 @@ class AppSw {
     'select_route': 'Chagua njia',
     'select_pickup_point': 'Chagua sehemu ya kupanda',
     'select_travel_date': 'Chagua tarehe ya safari',
+    'no_dates_available': 'Hakuna tarehe zinazopatikana mwezi huu',
     'select_departure_time': 'Chagua muda wa kuondoka',
     'at_least_one_seat': 'Angalau kiti 1',
     'select_payment_method': 'Chagua njia ya malipo',

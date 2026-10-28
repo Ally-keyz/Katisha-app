@@ -254,6 +254,7 @@ class AppRw {
     'select_destination_error': 'Hitamo aho ugana',
     'select_pickup_point': 'Hitamwo aho ufatira urugendo',
     'select_travel_date': 'Hitamwo itariki y\'urugendo',
+    'no_dates_available': 'Nta tariki iboneka uku kwezi',
     'select_departure_time': 'Hitamwo isaha yo guhaguruka',
     'at_least_one_seat': 'Nibura icyanya 1',
     'select_payment_method': 'Hitamwo uburyo bwo kwishyura',

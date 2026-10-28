@@ -53,6 +53,9 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
           child: Image.asset(
             'assets/images/splash_logo.png',
             width: 200,
+            // 2x the rendered width is sharp on every phone without keeping
+            // the full-resolution bitmap in memory.
+            cacheWidth: 400,
             fit: BoxFit.contain,
             color: Colors.white,
             colorBlendMode: BlendMode.srcIn,

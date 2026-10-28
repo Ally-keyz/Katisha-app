@@ -2229,10 +2229,32 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
+  /// East African cross-border travel requires at least 2 days advance
+  /// booking (matches the web minDays = 2).
+  static const int _advanceBookingDays = 2;
+
+  /// First date the wizard lets the user book.
+  DateTime get _minSelectableDate {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day + _advanceBookingDays);
+  }
+
+  /// Month containing [_minSelectableDate]; earlier months have no bookable
+  /// dates at all.
+  DateTime get _minSelectableMonth {
+    final min = _minSelectableDate;
+    return DateTime(min.year, min.month);
+  }
+
   // Opens the travel-date calendar in the shared Katisha modal: a centred
   // panel fixed at 89% of the screen height, same as the destination picker.
   Future<void> _openDatePickerModal() async {
     final l10n = AppLocalizations.of(context);
+    // Never open on a month that has no bookable dates (late in the month the
+    // 2-day notice pushes every date into the next month).
+    if (_calendarMonth.isBefore(_minSelectableMonth)) {
+      _calendarMonth = _minSelectableMonth;
+    }
     await showKatishaModal<void>(
       context: context,
       builder: (ctx) {
@@ -2276,12 +2298,33 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   Widget _buildCalendar({VoidCallback? onDatePicked}) {
+    final l10n = AppLocalizations.of(context);
     final year = _calendarMonth.year;
     final month = _calendarMonth.month;
     final firstDay = DateTime(year, month, 1);
     final lastDay = DateTime(year, month + 1, 0);
     final startWeekday = firstDay.weekday % 7;
     final today = DateTime.now();
+    final minDate = _minSelectableDate;
+    final monthStart = DateTime(year, month);
+
+    // Where the bookable part of this month starts. Everything before it is
+    // not rendered at all: drawing 20+ blank cells at the top of the grid used
+    // to push the few remaining dates to the bottom of the panel.
+    final int firstAvailableDay;
+    if (monthStart.isBefore(_minSelectableMonth)) {
+      firstAvailableDay = lastDay.day + 1; // nothing bookable this month
+    } else if (monthStart.isAtSameMomentAs(_minSelectableMonth)) {
+      firstAvailableDay = minDate.day;
+    } else {
+      firstAvailableDay = 1;
+    }
+    final availableCount = lastDay.day - firstAvailableDay + 1;
+    // Keep the weekday columns aligned even though leading days are skipped.
+    final leadingBlanks = availableCount > 0
+        ? (startWeekday + firstAvailableDay - 1) % 7
+        : 0;
+    final canGoBack = monthStart.isAfter(_minSelectableMonth);
 
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -2302,11 +2345,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               IconButton(
-                onPressed: () => setState(() {
-                  _calendarMonth = DateTime(year, month - 1);
-                }),
+                onPressed: canGoBack
+                    ? () => setState(() {
+                          _calendarMonth = DateTime(year, month - 1);
+                        })
+                    : null,
                 icon: const Icon(Icons.chevron_left, size: 20),
                 color: AppColors.textSub,
+                disabledColor: AppColors.textMuted.withValues(alpha: 0.35),
+                tooltip: canGoBack ? null : l10n.translate('no_dates_available'),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
               ),
@@ -2341,90 +2388,95 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 .toList(),
           ),
           const SizedBox(height: AppSpacing.xs),
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 7,
-              childAspectRatio: 1,
-            ),
-            itemCount: startWeekday + lastDay.day,
-            itemBuilder: (context, index) {
-              if (index < startWeekday) return const SizedBox.shrink();
-              final day = index - startWeekday + 1;
-              final date = DateTime(year, month, day);
-              // East African cross-border travel requires at least 2 days advance
-              // booking (matches the web minDays = 2).
-              const advanceDays = 2;
-              final minDate = DateTime(
-                today.year, today.month, today.day + advanceDays);
-              final isUnavailable = date.isBefore(minDate);
-              final isSelected = date.year == _selectedDate.year &&
-                  date.month == _selectedDate.month &&
-                  date.day == _selectedDate.day;
-              final isToday = date.year == today.year &&
-                  date.month == today.month &&
-                  date.day == today.day;
+          if (availableCount <= 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.xl),
+              child: Text(
+                l10n.translate('no_dates_available'),
+                textAlign: TextAlign.center,
+                style: AppTypography.bodySmall.copyWith(
+                  color: AppColors.textSub,
+                ),
+              ),
+            )
+          else
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 7,
+                childAspectRatio: 1,
+              ),
+              itemCount: leadingBlanks + availableCount,
+              itemBuilder: (context, index) {
+                // The grid starts at the first bookable day, so the remaining
+                // dates sit at the top of the panel instead of under a block of
+                // empty rows.
+                if (index < leadingBlanks) return const SizedBox.shrink();
+                final day = firstAvailableDay + index - leadingBlanks;
+                final date = DateTime(year, month, day);
+                final isSelected = date.year == _selectedDate.year &&
+                    date.month == _selectedDate.month &&
+                    date.day == _selectedDate.day;
+                final isToday = date.year == today.year &&
+                    date.month == today.month &&
+                    date.day == today.day;
 
-              // Only available dates are shown (unavailable days leave an empty
-              // cell, matching the web calendar).
-              if (isUnavailable) {
-                return const SizedBox.shrink();
-              }
-
-              return GestureDetector(
-                onTap: () {
-                  setState(() {
-                    _selectedDate = date;
-                    _datePicked = true;
-                    _selectedTime = null;
-                  });
-                  // Bring the departure-time selection into view after a date
-                  // is picked.
-                  _scrollToDepartureTime();
-                  onDatePicked?.call();
-                },
-                child: Center(
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(
-                      color: isSelected
-                          ? AppColors.primary
-                          : isToday
-                              ? AppColors.primaryLight
-                              : null,
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-                      boxShadow: isSelected
-                          ? [
-                              BoxShadow(
-                                color: AppColors.primary.withValues(alpha: 0.45),
-                                blurRadius: 10,
-                                spreadRadius: -3,
-                                offset: const Offset(0, 3),
-                              ),
-                            ]
-                          : null,
-                    ),
-                    child: Center(
-                      child: Text(
-                        '$day',
-                        style: AppTypography.bodyMedium.copyWith(
-                          color: isSelected
-                              ? AppColors.white
-                              : isToday
-                                  ? AppColors.primaryDark
-                                  : AppColors.text,
-                          fontWeight:
-                              isSelected ? FontWeight.w700 : FontWeight.w500,
+                return GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _selectedDate = date;
+                      _datePicked = true;
+                      _selectedTime = null;
+                    });
+                    // Bring the departure-time selection into view after a date
+                    // is picked.
+                    _scrollToDepartureTime();
+                    onDatePicked?.call();
+                  },
+                  child: Center(
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? AppColors.primary
+                            : isToday
+                                ? AppColors.primaryLight
+                                : null,
+                        // Round date buttons rather than rounded squares.
+                        shape: BoxShape.circle,
+                        boxShadow: isSelected
+                            ? [
+                                BoxShadow(
+                                  color:
+                                      AppColors.primary.withValues(alpha: 0.45),
+                                  blurRadius: 10,
+                                  spreadRadius: -3,
+                                  offset: const Offset(0, 3),
+                                ),
+                              ]
+                            : null,
+                      ),
+                      child: Center(
+                        child: Text(
+                          '$day',
+                          style: AppTypography.bodyMedium.copyWith(
+                            color: isSelected
+                                ? AppColors.white
+                                : isToday
+                                    ? AppColors.primaryDark
+                                    : AppColors.text,
+                            fontWeight:
+                                isSelected ? FontWeight.w700 : FontWeight.w500,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-              );
-            },
-          ),
+                );
+              },
+            ),
         ],
       ),
     );
@@ -2495,10 +2547,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
+              // Four compact columns instead of three tall ones: the slots are
+              // short labels, so they don't need a 50px-tall button.
+              crossAxisCount: 4,
               crossAxisSpacing: AppSpacing.sm,
               mainAxisSpacing: AppSpacing.sm,
-              childAspectRatio: 1.8,
+              mainAxisExtent: 40,
             ),
             itemCount: availableSlots.length,
             itemBuilder: (context, index) {
@@ -2514,11 +2568,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     color: isSelected ? AppColors.primary : AppColors.primaryLight,
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                   ),
                   child: Text(
                     slot,
-                    style: AppTypography.titleMedium.copyWith(
+                    style: AppTypography.labelLarge.copyWith(
                       color: isSelected ? AppColors.white : AppColors.primaryDark,
                       fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
                     ),

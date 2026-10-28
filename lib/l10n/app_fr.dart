@@ -250,6 +250,7 @@ class AppFr {
     'select_route': 'Sélectionnez un itinéraire',
     'select_pickup_point': 'Sélectionnez un point de ramassage',
     'select_travel_date': 'Sélectionnez la date de voyage',
+    'no_dates_available': 'Aucune date disponible ce mois-ci',
     'select_departure_time': "Sélectionnez l'heure de départ",
     'at_least_one_seat': 'Au moins 1 place',
     'select_payment_method': 'Sélectionnez le mode de paiement',

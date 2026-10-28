@@ -12,8 +12,6 @@ import 'local_notification_store.dart';
 import 'local_ticket_store.dart';
 import 'notification_service.dart';
 import 'notification_service_impl.dart';
-import 'print_service.dart';
-import 'print_service_impl.dart';
 import 'sound_service.dart';
 
 /// Lazy default providers — overridden at startup for notification & socket.
@@ -33,10 +31,6 @@ final soundServiceProvider = Provider<SoundService>((ref) {
   final service = SoundService();
   ref.onDispose(service.dispose);
   return service;
-});
-
-final printServiceProvider = Provider<PrintService>((ref) {
-  return PrintServiceImpl();
 });
 
 final fileServiceProvider = Provider<FileService>((ref) {

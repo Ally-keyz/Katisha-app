@@ -43,6 +43,9 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                     Image.asset(
                       'assets/images/logo.png',
                       height: 40,
+                      // Decode at 3x the rendered height instead of the full
+                      // source resolution; the logo is tiny on screen.
+                      cacheWidth: 120,
                       fit: BoxFit.contain,
                       errorBuilder: (_, __, ___) => const Icon(
                         Icons.directions_bus,

@@ -15,9 +15,11 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Cap the decoded-image cache so ticket PNGs and UI images can't balloon
-  // memory. ~100 MB of decoded bitmaps is plenty for this app's screens.
-  PaintingBinding.instance.imageCache.maximumSizeBytes = 100 * 1024 * 1024;
-  PaintingBinding.instance.imageCache.maximumSize = 400;
+  // memory. Every screen decodes at its render size (see the `cacheWidth` /
+  // `memCacheWidth` arguments), so ~40 MB is several screens' worth of
+  // bitmaps; anything above that just keeps stale photos alive.
+  PaintingBinding.instance.imageCache.maximumSizeBytes = 40 * 1024 * 1024;
+  PaintingBinding.instance.imageCache.maximumSize = 200;
 
   // White system bars with dark status-bar icons: the clock, signal and battery
   // sit on white app chrome, so the icons have to be dark to stay readable.

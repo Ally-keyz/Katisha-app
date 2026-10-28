@@ -247,6 +247,7 @@ class AppEn {
     'select_route': 'Select a route',
     'select_pickup_point': 'Select a pickup point',
     'select_travel_date': 'Select travel date',
+    'no_dates_available': 'No dates available this month',
     'select_departure_time': 'Select departure time',
     'at_least_one_seat': 'At least 1 seat',
     'select_payment_method': 'Select payment method',

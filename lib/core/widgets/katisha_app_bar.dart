@@ -58,16 +58,21 @@ class KatishaAppBar extends StatelessWidget implements PreferredSizeWidget {
       actions: [
         if (extraActions != null) ...extraActions!,
         if (showLottie)
-          // Center Lottie bus animation
+          // Center Lottie bus animation. Capped at 24 fps and isolated behind
+          // a RepaintBoundary so the decorative loop does not repaint the
+          // toolbar (and everything around it) on every frame.
           SizedBox(
             width: 48,
             height: 48,
             child: Center(
-              child: Lottie.asset(
-                'assets/lottie/bus.json',
-                height: 36,
-                width: 36,
-                repeat: true,
+              child: RepaintBoundary(
+                child: Lottie.asset(
+                  'assets/lottie/bus.json',
+                  height: 36,
+                  width: 36,
+                  repeat: true,
+                  frameRate: const FrameRate(24),
+                ),
               ),
             ),
           ),

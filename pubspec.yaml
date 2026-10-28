@@ -1,7 +1,7 @@
 name: katisha
 description: "Katisha - Bus Ticket Booking Mobile Application"
 publish_to: 'none'
-version: 1.0.0+11
+version: 1.0.0+13
 
 environment:
   sdk: ^3.10.4
@@ -14,13 +14,11 @@ dependencies:
 
   # UI
   cupertino_icons: ^1.0.8
-  flutter_svg: ^2.0.10+1
   lottie: ^3.3.1
   cached_network_image: ^3.4.1
   shimmer: ^3.0.0
   flutter_animate: ^4.5.2
   google_fonts: ^6.2.1
-  flutter_native_splash: ^2.4.3
 
   # State Management
   flutter_riverpod: ^2.6.1
@@ -36,11 +34,6 @@ dependencies:
   # Storage
   shared_preferences: ^2.3.4
   flutter_secure_storage: ^9.2.4
-  sqflite: ^2.4.1
-  path: ^1.9.0
-
-  # Auth & Security
-  jwt_decoder: ^2.0.1
 
   # Notifications
   flutter_local_notifications: ^18.0.1
@@ -53,14 +46,8 @@ dependencies:
   intl: ^0.20.1
   equatable: ^2.0.7
   dartz: ^0.10.1
-  uuid: ^4.5.1
-  url_launcher: ^6.3.1
   share_plus: ^10.1.4
   path_provider: ^2.1.5
-
-  # Printing
-  printing: ^5.13.4
-  pdf: ^3.11.2
 
   # QR Code
   qr_flutter: ^4.1.0
@@ -81,6 +68,8 @@ dev_dependencies:
   custom_lint: ^0.7.5
   riverpod_lint: ^2.6.2
   flutter_launcher_icons: ^0.14.3
+  # Build-time only: generates the native splash screens.
+  flutter_native_splash: ^2.4.3
 
 flutter_native_splash:
   color: "#1D4ED8"
