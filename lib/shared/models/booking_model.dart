@@ -1,3 +1,19 @@
+/// The server populates `confirmedBy`/`rejectedBy` as `{ _id, name, username }`
+/// objects (or leaves them as ObjectId strings), so resolve either to a
+/// display name without tripping the `as String?` cast.
+String? _agentName(dynamic value) {
+  if (value == null) return null;
+  if (value is String) return value;
+  if (value is Map) {
+    final name = value['name'];
+    if (name is String && name.isNotEmpty) return name;
+    final username = value['username'];
+    if (username is String && username.isNotEmpty) return username;
+    return value['_id']?.toString();
+  }
+  return value.toString();
+}
+
 class PassengerDetail {
   final String name;
   final String phone;
@@ -214,8 +230,8 @@ class Booking {
       route: json['route'] is Map<String, dynamic>
           ? BookingRoute.fromJson(json['route'] as Map<String, dynamic>)
           : null,
-      confirmedBy: json['confirmedBy'] as String?,
-      rejectedBy: json['rejectedBy'] as String?,
+      confirmedBy: _agentName(json['confirmedBy']),
+      rejectedBy: _agentName(json['rejectedBy']),
       rejectionReason: json['rejectionReason'] as String?,
       createdAt: json['createdAt'] != null
           ? DateTime.tryParse(json['createdAt'] as String)
