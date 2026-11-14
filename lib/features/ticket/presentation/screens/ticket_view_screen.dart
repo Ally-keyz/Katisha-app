@@ -8,6 +8,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/network/media_url.dart';
 import '../../../../core/platform/badge_counts.dart';
 import '../../../../core/platform/local_ticket_store.dart';
 import '../../../../core/platform/platform_providers.dart';
@@ -34,6 +35,8 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
   bool _loading = true;
   String? _error;
   String? _imageUrl;
+  String? _proofUrl;
+  String? _receiptUrl;
   String? _localImagePath;
   Map<String, dynamic>? _ticketData;
 
@@ -66,6 +69,8 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
       setState(() {
         _ticketData = cached;
         _localImagePath = localImage;
+        _proofUrl = cached['ticketProofImage'] as String?;
+        _receiptUrl = cached['receiptImage'] as String?;
         _loading = false;
       });
     }
@@ -89,9 +94,17 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
         final ticket = data['ticket'] as Map<String, dynamic>?;
         final booking = data['booking'] as Map<String, dynamic>?;
         final imageUrl = ticket?['imageUrl'] as String?;
+        final proofUrl = (data['ticketProofImage'] ??
+                booking?['ticketProofImage']) as String?;
+        final receiptUrl =
+            (data['receiptImage'] ?? booking?['receiptImage']) as String?;
 
         if (booking != null) {
-          await localStore.cacheBooking(widget.bookingId, booking);
+          await localStore.cacheBooking(widget.bookingId, {
+            ...booking,
+            'receiptImage': receiptUrl,
+            'ticketProofImage': proofUrl,
+          });
         }
 
         if (imageUrl != null && imageUrl.isNotEmpty) {
@@ -102,7 +115,15 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
         if (!mounted) return;
         setState(() {
           _imageUrl = imageUrl;
-          if (booking != null) _ticketData = booking;
+          _proofUrl = proofUrl;
+          _receiptUrl = receiptUrl;
+          if (booking != null) {
+            _ticketData = {
+              ...booking,
+              'receiptImage': receiptUrl,
+              'ticketProofImage': proofUrl,
+            };
+          }
           _loading = false;
           _error = null;
         });
@@ -232,6 +253,14 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
             const SizedBox(height: AppSpacing.md),
             _buildTripSummaryCard(l10n),
             const SizedBox(height: AppSpacing.md),
+            if (_proofUrl != null && _proofUrl!.isNotEmpty) ...[
+              _buildProofCard(),
+              const SizedBox(height: AppSpacing.md),
+            ],
+            if (_receiptUrl != null && _receiptUrl!.isNotEmpty) ...[
+              _buildReceiptCard(),
+              const SizedBox(height: AppSpacing.md),
+            ],
             _buildReferenceSection(l10n),
           ],
         ],
@@ -447,12 +476,13 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
   }
 
   Widget _buildStatusBadge(String status) {
-    final isConfirmed = status.toLowerCase() == 'confirmed';
-    final bgColor =
-        isConfirmed ? AppColors.successBg : AppColors.primaryLight;
+    final normalized = status.toLowerCase();
+    final isSuccess = normalized == 'confirmed' || normalized == 'issued';
+    final bgColor = isSuccess ? AppColors.successBg : AppColors.primaryLight;
     final textColor =
-        isConfirmed ? AppColors.statusCompleted : AppColors.primary;
+        isSuccess ? AppColors.statusCompleted : AppColors.primary;
     final borderColor = textColor.withAlpha(60);
+    final label = normalized == 'issued' ? 'Ticket issued' : status;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -465,7 +495,7 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            isConfirmed
+            isSuccess
                 ? Icons.check_circle_rounded
                 : Icons.info_outline_rounded,
             size: 12,
@@ -473,7 +503,7 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
           ),
           const SizedBox(width: 4),
           Text(
-            status.toUpperCase(),
+            label.toUpperCase(),
             style: AppTypography.labelSmall.copyWith(
               color: textColor,
               fontWeight: FontWeight.w700,
@@ -663,6 +693,218 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
           overflow: TextOverflow.ellipsis,
         ),
       ],
+    );
+  }
+
+  // ── Ticket Proof / Receipt ────────────────────
+
+  Widget _buildProofCard() {
+    final url = resolveMediaUrl(_proofUrl);
+    if (url == null) return const SizedBox.shrink();
+
+    return _buildMediaCard(
+      icon: Icons.verified_rounded,
+      accent: AppColors.statusCompleted,
+      title: 'Issued ticket photo',
+      subtitle: 'Photo of the physical ticket issued by the agent',
+      url: url,
+      onTap: () => _showImageDialog(url, 'Issued ticket photo'),
+    );
+  }
+
+  Widget _buildReceiptCard() {
+    final url = resolveMediaUrl(_receiptUrl);
+    if (url == null) return const SizedBox.shrink();
+
+    return _buildMediaCard(
+      icon: Icons.receipt_long_rounded,
+      accent: AppColors.primary,
+      title: 'Booking receipt',
+      subtitle: 'System-generated proof of payment for this booking',
+      url: url,
+      onTap: () => _showImageDialog(url, 'Booking receipt'),
+    );
+  }
+
+  /// The `/uploads` route requires a bearer token (or a dashboard referer),
+  /// so relative fallback images need the API token attached explicitly.
+  Map<String, String>? _imageHeaders() {
+    final token = ref.read(apiClientProvider).accessToken;
+    if (token == null || token.isEmpty) return null;
+    return {'Authorization': 'Bearer $token'};
+  }
+
+  Widget _buildMediaCard({
+    required IconData icon,
+    required Color accent,
+    required String title,
+    required String subtitle,
+    required String url,
+    required VoidCallback onTap,
+  }) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
+        border: Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.text.withAlpha(8),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                  child: CachedNetworkImage(
+                    imageUrl: url,
+                    width: 52,
+                    height: 52,
+                    fit: BoxFit.cover,
+                    memCacheWidth: 200,
+                    httpHeaders: _imageHeaders(),
+                    placeholder: (_, __) => Container(
+                      width: 52,
+                      height: 52,
+                      color: AppColors.surfaceVariant,
+                    ),
+                    errorWidget: (_, __, ___) => Container(
+                      width: 52,
+                      height: 52,
+                      color: accent.withAlpha(20),
+                      child: Icon(icon, color: accent, size: 24),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm + 2),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(icon, size: 13, color: accent),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              title,
+                              style: AppTypography.labelMedium.copyWith(
+                                color: AppColors.text,
+                                fontWeight: FontWeight.w700,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        subtitle,
+                        style: AppTypography.bodySmall.copyWith(
+                          color: AppColors.textSub,
+                          fontSize: 11,
+                          height: 1.35,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(
+                  Icons.open_in_full_rounded,
+                  size: 17,
+                  color: AppColors.textMuted,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showImageDialog(String url, String title) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: AppColors.white,
+        insetPadding: const EdgeInsets.all(AppSpacing.md),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md,
+                AppSpacing.sm,
+                AppSpacing.sm,
+                0,
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(title, style: AppTypography.titleSmall),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                  ),
+                ],
+              ),
+            ),
+            Flexible(
+              child: ClipRRect(
+                borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(AppSpacing.radiusXl),
+                ),
+                child: InteractiveViewer(
+                  maxScale: 4,
+                  child: CachedNetworkImage(
+                    imageUrl: url,
+                    fit: BoxFit.contain,
+                    memCacheWidth: 1600,
+                    httpHeaders: _imageHeaders(),
+                    placeholder: (_, __) => const SizedBox(
+                      height: 260,
+                      child: Center(
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: AppColors.primary,
+                          ),
+                        ),
+                      ),
+                    ),
+                    errorWidget: (_, __, ___) => const SizedBox(
+                      height: 260,
+                      child: Center(
+                        child: Text('Could not load the image'),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

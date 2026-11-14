@@ -119,6 +119,12 @@ class ApiClient {
 
   void _onRequest(RequestOptions options, RequestInterceptorHandler handler) {
     if (kDebugMode) debugPrint('[API] → ${options.method} ${options.uri}');
+    // Multipart requests must let Dio set the boundary-bearing content type.
+    // Leaving the default `application/json` header on a FormData body makes
+    // the server fail to parse the file upload.
+    if (options.data is FormData) {
+      options.headers.remove(Headers.contentTypeHeader);
+    }
     if (_accessToken != null && _accessToken!.isNotEmpty) {
       options.headers['Authorization'] = 'Bearer $_accessToken';
     }

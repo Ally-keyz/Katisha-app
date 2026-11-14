@@ -9,6 +9,10 @@
     <!-- Local notification scheduling (alarms) -->
     <uses-permission android:name="android.permission.VIBRATE"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+    <!-- Exact 60/30/20-minute departure alerts on Android 12+ -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
+    <!-- Intense departure alerts can take over the lock screen -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
 
     <!-- Internet (required for all API calls) -->
     <uses-permission android:name="android.permission.INTERNET"/>
@@ -54,6 +58,10 @@
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
             </intent-filter>
         </service>
+        <!-- Delivers the "Snooze" action button from the departure alerts -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"
+            android:exported="false"/>
 
         <meta-data
             android:name="flutterEmbedding"

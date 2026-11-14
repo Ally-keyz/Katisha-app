@@ -119,6 +119,37 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 ),
               ),
               const Spacer(),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  0,
+                  AppSpacing.lg,
+                  AppSpacing.lg,
+                ),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () => context.go('/login'),
+                    icon: const Icon(Icons.login_rounded, size: 18),
+                    label: Text(l10n.translate('login')),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primary,
+                      side: const BorderSide(color: AppColors.border),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: AppSpacing.md,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(
+                          AppSpacing.radiusMd,
+                        ),
+                      ),
+                      textStyle: AppTypography.buttonMedium.copyWith(
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),

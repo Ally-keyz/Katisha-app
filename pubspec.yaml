@@ -1,7 +1,7 @@
 name: katisha
 description: "Katisha - Bus Ticket Booking Mobile Application"
 publish_to: 'none'
-version: 1.0.0+14
+version: 1.0.0+15
 
 environment:
   sdk: ^3.10.4
@@ -48,6 +48,7 @@ dependencies:
   dartz: ^0.10.1
   share_plus: ^10.1.4
   path_provider: ^2.1.5
+  image_picker: ^1.1.2
 
   # QR Code
   qr_flutter: ^4.1.0

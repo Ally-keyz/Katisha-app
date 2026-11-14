@@ -53,6 +53,11 @@
 		<!-- Notification usage description -->
 		<key>NSUserNotificationUsageDescription</key>
 		<string>Katisha needs notification permission to send you journey alerts and booking updates.</string>
+		<!-- Camera / photo library (agents photograph the issued physical ticket) -->
+		<key>NSCameraUsageDescription</key>
+		<string>Katisha uses the camera so agents can photograph the issued physical ticket as proof.</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>Katisha lets agents choose a photo of the issued physical ticket as proof.</string>
 		<!-- Google Sign-In URL scheme -->
 		<key>CFBundleURLTypes</key>
 		<array>

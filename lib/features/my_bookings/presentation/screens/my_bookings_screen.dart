@@ -60,9 +60,12 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
     return !travelDate.isBefore(today);
   }
 
-  /// Only issued tickets are shown; nothing else (not even confirmed ones).
-  bool _isIssued(Booking b) {
-    return b.status == 'issued';
+  /// Paid tickets are visible straight away: confirmed bookings show the
+  /// system receipt while the agent prepares the physical ticket, and issued
+  /// bookings show the ticket/proof.
+  bool _isTicketVisible(Booking b) {
+    if (b.status != 'issued' && b.status != 'confirmed') return false;
+    return b.status == 'issued' || b.paymentStatus == 'paid';
   }
 
   /// Requests the next page once the user is within [_loadMoreThreshold] pixels
@@ -104,7 +107,7 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
       if (!mounted) return;
       final cachedBookings = cached
           .map((json) => Booking.fromJson(json))
-          .where((b) => _isIssued(b) && _isNonExpired(b))
+          .where((b) => _isTicketVisible(b) && _isNonExpired(b))
           .toList();
       setState(() {
         _bookings = cachedBookings;
@@ -126,7 +129,7 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
         if (!mounted) return;
         final cachedBookings = cached
             .map((json) => Booking.fromJson(json))
-            .where((b) => _isIssued(b) && _isNonExpired(b))
+            .where((b) => _isTicketVisible(b) && _isNonExpired(b))
             .toList();
         if (cachedBookings.isNotEmpty) {
           setState(() {
@@ -149,7 +152,7 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
       },
       (response) async {
         final nonExpired =
-            response.bookings.where((b) => _isIssued(b) && _isNonExpired(b)).toList();
+            response.bookings.where((b) => _isTicketVisible(b) && _isNonExpired(b)).toList();
         setState(() {
           if (_page == 1) {
             _bookings = nonExpired;
@@ -225,6 +228,11 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
       'paymentStatus': booking.paymentStatus,
       'paymentMethod': booking.paymentMethod,
       'ticketImage': booking.ticketImage,
+      'receiptImage': booking.receiptImage,
+      'ticketProofImage': booking.ticketProofImage,
+      'ticketProofUploadedAt': booking.ticketProofUploadedAt?.toIso8601String(),
+      'agentSeen': booking.agentSeen,
+      'readyAt': booking.readyAt?.toIso8601String(),
       'agency': booking.agency != null
           ? {'id': booking.agency!.id, 'name': booking.agency!.name}
           : null,
@@ -464,6 +472,7 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
 
 Color _statusFgColor(String status) {
   switch (status) {
+    case 'issued':
     case 'confirmed':
       return const Color(0xFF15803D);
     case 'pending':
@@ -478,6 +487,7 @@ Color _statusFgColor(String status) {
 
 Color _statusBgColor(String status) {
   switch (status) {
+    case 'issued':
     case 'confirmed':
       return const Color(0xFFDCFCE7);
     case 'pending':
@@ -492,6 +502,8 @@ Color _statusBgColor(String status) {
 
 String _statusLabel(String status) {
   switch (status) {
+    case 'issued':
+      return 'Issued';
     case 'confirmed':
       return 'Confirmed';
     case 'pending':
@@ -669,33 +681,43 @@ class _BookingCard extends StatelessWidget {
                   ],
                 ),
 
-                // View Ticket button (issued tickets only)
-                if (isIssued) ...[
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _showTicketModal(context),
-                      icon: const Icon(Icons.qr_code_rounded, size: 15),
-                      label: Text(l10n.translate('view_ticket')),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.primary,
-                        side: BorderSide(
-                          color: AppColors.primary.withOpacity(0.4),
-                          width: 1,
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        textStyle: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                        ),
+                // View the issued ticket, or the system receipt while the
+                // agent is still preparing the physical ticket.
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: isIssued
+                        ? () => _showTicketModal(context)
+                        : () => context.push('/ticket/${booking.id}'),
+                    icon: Icon(
+                      isIssued
+                          ? Icons.qr_code_rounded
+                          : Icons.receipt_long_rounded,
+                      size: 15,
+                    ),
+                    label: Text(
+                      isIssued
+                          ? l10n.translate('view_ticket')
+                          : 'View receipt',
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primary,
+                      side: BorderSide(
+                        color: AppColors.primary.withOpacity(0.4),
+                        width: 1,
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      textStyle: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
-                ],
+                ),
               ],
             ),
           ),

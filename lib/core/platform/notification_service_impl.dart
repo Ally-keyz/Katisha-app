@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -8,11 +9,16 @@ import 'package:timezone/data/latest_all.dart' as tz_data;
 
 import 'notification_service.dart';
 
-const _kMaxSnoozeCount = 3;
-const _kSnoozeMinutes = 5;
-const _kAlertOffsetMinutes = 10;
-const _kEarlyAlertOffsetMinutes = 30;
-const _kSnoozePrefix = 'snooze_';
+/// Departure alerts are deliberately loud and intrusive: one hour, thirty
+/// minutes, and twenty minutes before departure. They stay on the lock screen
+/// until the traveller snoozes them.
+const List<int> _kAlertOffsetsMinutes = [60, 30, 20];
+const int _kMaxSnoozeCount = 3;
+const int _kSnoozeMinutes = 5;
+const String _kSnoozePrefix = 'snooze_';
+const String _kSnoozeActionId = 'snooze';
+const String _kJourneyChannelId = 'Katisha_journey_alerts_v2';
+const String _kBookingChannelId = 'Katisha_booking_alerts_v2';
 
 class NotificationServiceImpl implements NotificationService {
   final FlutterLocalNotificationsPlugin _plugin;
@@ -23,10 +29,11 @@ class NotificationServiceImpl implements NotificationService {
   final _foregroundAlertController =
       StreamController<NotificationPayload>.broadcast();
 
-  late final AndroidNotificationDetails _androidDetails;
+  late final AndroidNotificationDetails _journeyAndroidDetails;
   late final AndroidNotificationDetails _bookingAndroidDetails;
-  late final DarwinNotificationDetails _iOSDetails;
-  late final NotificationDetails _notificationDetails;
+  late final DarwinNotificationDetails _journeyIOSDetails;
+  late final DarwinNotificationDetails _bookingIOSDetails;
+  late final NotificationDetails _journeyNotificationDetails;
   late final NotificationDetails _bookingNotificationDetails;
 
   NotificationServiceImpl({
@@ -34,54 +41,100 @@ class NotificationServiceImpl implements NotificationService {
     required SharedPreferences prefs,
   })  : _plugin = plugin,
         _prefs = prefs {
-    _androidDetails = const AndroidNotificationDetails(
-      'Katisha_journey_alerts',
-      'Journey Alerts',
-      channelDescription: 'Notifications for upcoming journey departures',
-      importance: Importance.high,
-      priority: Priority.high,
-      ticker: 'Journey Alert',
+    _journeyAndroidDetails = AndroidNotificationDetails(
+      _kJourneyChannelId,
+      'Departure Alerts',
+      channelDescription:
+          'Loud reminders one hour, thirty minutes, and twenty minutes before departure',
+      importance: Importance.max,
+      priority: Priority.max,
+      ticker: 'Departure Alert',
       icon: '@mipmap/ic_launcher',
-      sound: RawResourceAndroidNotificationSound('notification'),
+      sound: const RawResourceAndroidNotificationSound('notification'),
+      playSound: true,
       enableVibration: true,
+      vibrationPattern: Int64List.fromList(const [0, 900, 450, 900]),
+      category: AndroidNotificationCategory.alarm,
+      fullScreenIntent: true,
+      // Ongoing + non-auto-cancel keeps the alert pinned until the traveller
+      // explicitly snoozes it.
+      ongoing: true,
+      autoCancel: false,
+      visibility: NotificationVisibility.public,
+      actions: const [
+        AndroidNotificationAction(
+          _kSnoozeActionId,
+          'Snooze 5 min',
+          showsUserInterface: false,
+          cancelNotification: true,
+        ),
+      ],
     );
-    _bookingAndroidDetails = const AndroidNotificationDetails(
-      'Katisha_booking_alerts',
+    _bookingAndroidDetails = AndroidNotificationDetails(
+      _kBookingChannelId,
       'Booking Alerts',
-      channelDescription: 'Notifications for new bookings and payment confirmations',
-      importance: Importance.high,
-      priority: Priority.high,
+      channelDescription:
+          'Notifications for new bookings, ticket issuance, and payment confirmations',
+      importance: Importance.max,
+      priority: Priority.max,
       ticker: 'Booking Alert',
       icon: '@mipmap/ic_launcher',
-      sound: RawResourceAndroidNotificationSound('notification'),
+      sound: const RawResourceAndroidNotificationSound('notification'),
+      playSound: true,
       enableVibration: true,
+      vibrationPattern: Int64List.fromList(const [0, 500, 250, 500]),
+      visibility: NotificationVisibility.public,
     );
-    _iOSDetails = const DarwinNotificationDetails(
+    _journeyIOSDetails = const DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
+      presentBanner: true,
+      presentList: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
+      categoryIdentifier: 'journey_alert',
     );
-    _notificationDetails = NotificationDetails(
-      android: _androidDetails,
-      iOS: _iOSDetails,
+    _bookingIOSDetails = const DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+      presentBanner: true,
+      presentList: true,
+      interruptionLevel: InterruptionLevel.active,
+    );
+    _journeyNotificationDetails = NotificationDetails(
+      android: _journeyAndroidDetails,
+      iOS: _journeyIOSDetails,
     );
     _bookingNotificationDetails = NotificationDetails(
       android: _bookingAndroidDetails,
-      iOS: _iOSDetails,
+      iOS: _bookingIOSDetails,
     );
   }
 
   @override
-  Future<void> initialize() async {
+  Future<void> initialize({bool requestPermissions = true}) async {
     tz_data.initializeTimeZones();
 
     const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const iosInit = DarwinInitializationSettings(
+    final iosInit = DarwinInitializationSettings(
       requestAlertPermission: false,
       requestBadgePermission: false,
       requestSoundPermission: false,
+      notificationCategories: [
+        DarwinNotificationCategory(
+          'journey_alert',
+          actions: [
+            DarwinNotificationAction.plain(
+              _kSnoozeActionId,
+              'Snooze 5 min',
+              options: {DarwinNotificationActionOption.foreground},
+            ),
+          ],
+        ),
+      ],
     );
-    const settings = InitializationSettings(
+    final settings = InitializationSettings(
       android: androidInit,
       iOS: iosInit,
     );
@@ -89,15 +142,26 @@ class NotificationServiceImpl implements NotificationService {
     await _plugin.initialize(
       settings,
       onDidReceiveNotificationResponse: (response) {
+        final actionId = response.actionId;
         final payload = response.payload;
         if (payload != null) {
+          final data = _parsePayload(payload);
+          final bookingId = data['entity_id'];
+          if (actionId == _kSnoozeActionId &&
+              bookingId != null &&
+              bookingId.isNotEmpty) {
+            // The action is handled without opening the app on Android; on iOS
+            // it arrives here. Either way, reschedule the alert quietly.
+            unawaited(handleSnooze(bookingId));
+            return;
+          }
           _notificationTappedController.add(
-            NotificationPayload.fromMap(
-              _parsePayload(payload),
-            ),
+            NotificationPayload.fromMap(data),
           );
         }
       },
+      onDidReceiveBackgroundNotificationResponse:
+          notificationTapBackground,
     );
 
     if (Platform.isAndroid) {
@@ -106,22 +170,32 @@ class NotificationServiceImpl implements NotificationService {
               AndroidFlutterLocalNotificationsPlugin>();
       await androidPlugin?.createNotificationChannel(
         const AndroidNotificationChannel(
-          'Katisha_journey_alerts',
-          'Journey Alerts',
-          description: 'Notifications for upcoming journey departures',
-          importance: Importance.high,
+          _kJourneyChannelId,
+          'Departure Alerts',
+          description:
+              'Loud reminders one hour, thirty minutes, and twenty minutes before departure',
+          importance: Importance.max,
+          playSound: true,
+          enableVibration: true,
         ),
       );
       await androidPlugin?.createNotificationChannel(
         const AndroidNotificationChannel(
-          'Katisha_booking_alerts',
+          _kBookingChannelId,
           'Booking Alerts',
-          description: 'Notifications for new bookings and payment confirmations',
-          importance: Importance.high,
+          description:
+              'Notifications for new bookings, ticket issuance, and payment confirmations',
+          importance: Importance.max,
+          playSound: true,
           enableVibration: true,
         ),
       );
-      await androidPlugin?.requestNotificationsPermission();
+      if (requestPermissions) {
+        await androidPlugin?.requestNotificationsPermission();
+      }
+    } else if (Platform.isIOS && requestPermissions) {
+      // Permission is requested explicitly from [requestPermission] during the
+      // login flow, so don't prompt during background initialization.
     }
   }
 
@@ -149,6 +223,7 @@ class NotificationServiceImpl implements NotificationService {
           alert: true,
           badge: true,
           sound: true,
+          critical: true,
         );
         return granted ?? false;
       }
@@ -162,12 +237,12 @@ class NotificationServiceImpl implements NotificationService {
     required String routeName,
     required DateTime departureTime,
   }) async {
+    // A single-alert caller still receives the most urgent reminder.
     await _scheduleJourneyAlertAt(
       bookingId: bookingId,
       routeName: routeName,
       departureTime: departureTime,
-      minutesBefore: _kAlertOffsetMinutes,
-      title: 'Your journey starts in $_kAlertOffsetMinutes minutes',
+      minutesBefore: 20,
     );
   }
 
@@ -177,21 +252,17 @@ class NotificationServiceImpl implements NotificationService {
     required String routeName,
     required DateTime departureTime,
   }) async {
-    await _scheduleJourneyAlertAt(
-      bookingId: bookingId,
-      routeName: routeName,
-      departureTime: departureTime,
-      minutesBefore: _kEarlyAlertOffsetMinutes,
-      title: 'Your journey starts in $_kEarlyAlertOffsetMinutes minutes',
-    );
-    await _scheduleJourneyAlertAt(
-      bookingId: bookingId,
-      routeName: routeName,
-      departureTime: departureTime,
-      minutesBefore: _kAlertOffsetMinutes,
-      title: 'Your journey starts in $_kAlertOffsetMinutes minutes',
-    );
-    await _resetSnoozeCount(bookingId);
+    // Replacing the schedule must also drop any alert from a previous booking
+    // state and reset the snooze budget.
+    await cancelJourneyAlert(bookingId);
+    for (final minutes in _kAlertOffsetsMinutes) {
+      await _scheduleJourneyAlertAt(
+        bookingId: bookingId,
+        routeName: routeName,
+        departureTime: departureTime,
+        minutesBefore: minutes,
+      );
+    }
   }
 
   Future<void> _scheduleJourneyAlertAt({
@@ -199,7 +270,6 @@ class NotificationServiceImpl implements NotificationService {
     required String routeName,
     required DateTime departureTime,
     required int minutesBefore,
-    required String title,
   }) async {
     final scheduledTime =
         departureTime.subtract(Duration(minutes: minutesBefore));
@@ -208,11 +278,15 @@ class NotificationServiceImpl implements NotificationService {
       return;
     }
 
+    final title = minutesBefore >= 60
+        ? 'Your journey starts in 1 hour'
+        : 'Your journey starts in $minutesBefore minutes';
     final payload = _encodePayload({
       'title': title,
-      'body': 'Route: $routeName',
+      'body': 'Route: $routeName. Snooze to dismiss this alert.',
       'type': 'journey_alert',
       'entity_id': bookingId,
+      'minutes_before': minutesBefore,
     });
 
     final notificationId =
@@ -222,19 +296,22 @@ class NotificationServiceImpl implements NotificationService {
     await _plugin.zonedSchedule(
       notificationId,
       title,
-      'Route: $routeName',
+      'Route: $routeName. Snooze to dismiss this alert.',
       tzScheduledTime,
-      _notificationDetails,
+      _journeyNotificationDetails,
       payload: payload,
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
     );
   }
 
   @override
   Future<void> cancelJourneyAlert(String bookingId) async {
-    await _plugin.cancel(_bookingToNotificationId(bookingId) + _kEarlyAlertOffsetMinutes);
-    await _plugin.cancel(_bookingToNotificationId(bookingId) + _kAlertOffsetMinutes);
+    for (final minutes in _kAlertOffsetsMinutes) {
+      await _plugin.cancel(_bookingToNotificationId(bookingId) + minutes);
+    }
+    await _plugin.cancel(_bookingToNotificationId(bookingId) + _kSnoozeMinutes);
     await _resetSnoozeCount(bookingId);
   }
 
@@ -252,7 +329,8 @@ class NotificationServiceImpl implements NotificationService {
       'entity_id': entityId ?? '',
     });
 
-    final notificationId = DateTime.now().millisecondsSinceEpoch.remainder(100000);
+    final notificationId =
+        DateTime.now().millisecondsSinceEpoch.remainder(100000);
 
     await _plugin.show(
       notificationId,
@@ -267,6 +345,11 @@ class NotificationServiceImpl implements NotificationService {
   Future<void> handleSnooze(String bookingId) async {
     final currentCount = _getSnoozeCount(bookingId);
     if (currentCount >= _kMaxSnoozeCount) {
+      // Final snooze budget spent: clear the pinned alert so it can't linger
+      // forever. The next real departure alert will still fire.
+      await _plugin.cancel(
+        _bookingToNotificationId(bookingId) + _kSnoozeMinutes,
+      );
       return;
     }
 
@@ -276,10 +359,13 @@ class NotificationServiceImpl implements NotificationService {
     final snoozeTime =
         DateTime.now().add(const Duration(minutes: _kSnoozeMinutes));
     final notificationId =
-        _bookingToNotificationId(bookingId) + _kAlertOffsetMinutes;
+        _bookingToNotificationId(bookingId) + _kSnoozeMinutes;
+    final title = 'Snoozed departure alert';
+    final body =
+        'Your journey departs soon. This alert will repeat in $_kSnoozeMinutes minutes ($newCount/$_kMaxSnoozeCount).';
     final payload = _encodePayload({
-      'title': 'Snoozed Journey Alert',
-      'body': 'Your journey departs soon. Snooze $newCount/$_kMaxSnoozeCount',
+      'title': title,
+      'body': body,
       'type': 'journey_alert_snooze',
       'entity_id': bookingId,
     });
@@ -287,13 +373,14 @@ class NotificationServiceImpl implements NotificationService {
 
     await _plugin.zonedSchedule(
       notificationId,
-      'Snoozed Journey Alert',
-      'Your journey departs soon. Snooze $newCount/$_kMaxSnoozeCount',
+      title,
+      body,
       tzSnoozeTime,
-      _notificationDetails,
+      _journeyNotificationDetails,
       payload: payload,
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
+      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
     );
   }
 
@@ -324,11 +411,36 @@ class NotificationServiceImpl implements NotificationService {
 
   String _encodePayload(Map<String, dynamic> data) {
     return data.entries
-        .map((e) => '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value.toString())}')
+        .map((e) =>
+            '${Uri.encodeComponent(e.key)}=${Uri.encodeComponent(e.value.toString())}')
         .join('&');
   }
 
   Map<String, String> _parsePayload(String encoded) {
     return Uri.splitQueryString(encoded);
+  }
+}
+
+/// Handles notification actions while the app is terminated or in the
+/// background. Must be a top-level function for the plugin's entry point.
+@pragma('vm:entry-point')
+void notificationTapBackground(NotificationResponse response) async {
+  if (response.actionId != _kSnoozeActionId) return;
+  final payload = response.payload;
+  if (payload == null || payload.isEmpty) return;
+  final data = Uri.splitQueryString(payload);
+  final bookingId = data['entity_id'];
+  if (bookingId == null || bookingId.isEmpty) return;
+
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    final service = NotificationServiceImpl(
+      plugin: FlutterLocalNotificationsPlugin(),
+      prefs: prefs,
+    );
+    await service.initialize(requestPermissions: false);
+    await service.handleSnooze(bookingId);
+  } catch (_) {
+    // The action is best-effort; the scheduled alerts remain in place.
   }
 }

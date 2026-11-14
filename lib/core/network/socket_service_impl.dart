@@ -86,6 +86,26 @@ class SocketServiceImpl implements SocketService {
       }
     });
 
+    // Agent / ticket lifecycle events. The screens and the global notification
+    // bridge consume these through [onEvent].
+    for (final eventName in const [
+      'booking_confirmed',
+      'booking_issued',
+      'booking_seen',
+      'booking_ready',
+      'booking_rejected',
+      'booking_cancelled',
+      'ticket_uploaded',
+    ]) {
+      _socket!.on(eventName, (data) {
+        if (data is Map<String, dynamic>) {
+          _eventController.add(
+            SocketEvent(name: eventName, data: data),
+          );
+        }
+      });
+    }
+
     _socket!.onError((error) {
       _eventController.addError(error);
     });

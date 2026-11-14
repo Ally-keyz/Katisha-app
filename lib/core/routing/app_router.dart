@@ -7,6 +7,8 @@ import '../platform/badge_counts.dart';
 
 import '../../features/splash/presentation/screens/splash_screen.dart';
 import '../../features/onboarding/presentation/screens/onboarding_screen.dart';
+import '../../features/auth/presentation/screens/login_screen.dart';
+import '../../features/agent/presentation/screens/agent_bookings_screen.dart';
 import '../../features/my_bookings/presentation/screens/my_bookings_screen.dart';
 import '../../features/notifications/presentation/screens/notifications_screen.dart';
 import '../../features/booking/presentation/screens/booking_wizard_screen.dart';
@@ -30,6 +32,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/onboarding',
         builder: (context, state) => const OnboardingScreen(),
+      ),
+      GoRoute(
+        path: '/login',
+        builder: (context, state) => const LoginScreen(),
+      ),
+
+      // ── Agent portal (assigned-route field agents) ───────────────────────
+      GoRoute(
+        path: '/agent',
+        builder: (context, state) => const AgentBookingsScreen(),
       ),
 
       // ── User role routes (bottom nav shell) ──────────────────────────────

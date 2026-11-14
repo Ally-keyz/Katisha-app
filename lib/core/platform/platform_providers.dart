@@ -19,6 +19,11 @@ final notificationServiceProvider = Provider<NotificationService>((ref) {
   return _NoOpNotificationService();
 });
 
+/// App-wide SharedPreferences instance, overridden at startup.
+final sharedPreferencesProvider = Provider<SharedPreferences>((ref) {
+  throw StateError('sharedPreferencesProvider must be overridden');
+});
+
 final localNotificationStoreProvider = Provider<LocalNotificationStore>((ref) {
   throw StateError('localNotificationStoreProvider must be overridden');
 });
@@ -62,6 +67,7 @@ Future<List<Override>> createAppOverrides() async {
     }),
     localNotificationStoreProvider.overrideWithValue(localStore),
     localTicketStoreProvider.overrideWithValue(localTicketStore),
+    sharedPreferencesProvider.overrideWithValue(prefs),
     socketServiceProvider.overrideWith((ref) {
       ref.onDispose(socketService.dispose);
       return socketService;
@@ -72,7 +78,9 @@ Future<List<Override>> createAppOverrides() async {
 /// Runs notification setup in the background so it never blocks app startup.
 Future<void> _initializeNotifications(NotificationServiceImpl service) async {
   try {
-    await service.initialize();
+    // Permission is requested deliberately during login instead of at cold
+    // start, so the app never fires a system prompt before the user acts.
+    await service.initialize(requestPermissions: false);
   } catch (_) {
     // Never let background notification setup crash or delay the app.
   }
@@ -81,7 +89,7 @@ Future<void> _initializeNotifications(NotificationServiceImpl service) async {
 /// No-op fallback used when real service isn't initialized.
 class _NoOpNotificationService implements NotificationService {
   @override
-  Future<void> initialize() async {}
+  Future<void> initialize({bool requestPermissions = true}) async {}
   @override
   Future<String?> getDeviceToken() async => null;
   @override

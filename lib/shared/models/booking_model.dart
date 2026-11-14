@@ -100,6 +100,12 @@ class Booking {
   final String? contactPhone;
   final String? ticketImage;
   final String? ticketHash;
+  final String? receiptImage;
+  final String? ticketProofImage;
+  final DateTime? ticketProofUploadedAt;
+  final bool agentSeen;
+  final DateTime? agentSeenAt;
+  final DateTime? readyAt;
   final BookingAgency? agency;
   final BookingUser? user;
   final BookingRoute? route;
@@ -135,6 +141,12 @@ class Booking {
     this.contactPhone,
     this.ticketImage,
     this.ticketHash,
+    this.receiptImage,
+    this.ticketProofImage,
+    this.ticketProofUploadedAt,
+    this.agentSeen = false,
+    this.agentSeenAt,
+    this.readyAt,
     this.agency,
     this.user,
     this.route,
@@ -181,6 +193,18 @@ class Booking {
       contactPhone: json['contactPhone'] as String?,
       ticketImage: json['ticketImage'] as String?,
       ticketHash: json['ticketHash'] as String?,
+      receiptImage: json['receiptImage'] as String?,
+      ticketProofImage: json['ticketProofImage'] as String?,
+      ticketProofUploadedAt: json['ticketProofUploadedAt'] != null
+          ? DateTime.tryParse(json['ticketProofUploadedAt'] as String)
+          : null,
+      agentSeen: json['agentSeen'] as bool? ?? false,
+      agentSeenAt: json['agentSeenAt'] != null
+          ? DateTime.tryParse(json['agentSeenAt'] as String)
+          : null,
+      readyAt: json['readyAt'] != null
+          ? DateTime.tryParse(json['readyAt'] as String)
+          : null,
       agency: json['agency'] is Map<String, dynamic>
           ? BookingAgency.fromJson(json['agency'] as Map<String, dynamic>)
           : null,

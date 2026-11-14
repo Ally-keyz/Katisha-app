@@ -31,7 +31,10 @@ class NotificationPayload {
 /// directly — they must go through this abstraction.
 abstract class NotificationService {
   /// Initializes push notification infrastructure (FCM, local notifications).
-  Future<void> initialize();
+  ///
+  /// [requestPermissions] is false for background/action entry points, where
+  /// prompting the user would be inappropriate.
+  Future<void> initialize({bool requestPermissions = true});
 
   /// Returns the FCM device token for registration with the backend.
   Future<String?> getDeviceToken();
@@ -40,14 +43,15 @@ abstract class NotificationService {
   /// Returns true if permission was granted.
   Future<bool> requestPermission();
 
-  /// Schedules a local notification 10 minutes before [departureTime].
+  /// Schedules a loud local notification 20 minutes before [departureTime].
   Future<void> scheduleJourneyAlert({
     required String bookingId,
     required String routeName,
     required DateTime departureTime,
   });
 
-  /// Schedules local notifications 30 and 10 minutes before [departureTime].
+  /// Schedules loud, snooze-to-dismiss local notifications 60, 30, and 20
+  /// minutes before [departureTime].
   Future<void> scheduleJourneyAlerts({
     required String bookingId,
     required String routeName,

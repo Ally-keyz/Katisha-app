@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../../../../core/auth/session.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/platform/ticket_sync_service.dart';
 import '../../../../core/theme/app_colors.dart';
@@ -21,18 +22,33 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     _bootstrap();
   }
 
-  /// Loads persisted tokens and navigates immediately when done. Everyone
-  /// lands on the language selection screen.
+  /// Loads persisted tokens, restores the account, and routes by role. Guests
+  /// land on the language screen; signed-in users go straight to their home.
   Future<void> _bootstrap() async {
     final apiClient = ref.read(apiClientProvider);
     await apiClient.init();
     if (!mounted) return;
 
+    SessionUser? user;
     if (apiClient.isAuthenticated) {
-      // Fetch and save the user's tickets locally in the background, so they
-      // are available offline (ticket JSON + private ticket images).
-      startBackgroundTicketSync(ref);
+      await ref.read(sessionProvider.notifier).restore();
+      if (!mounted) return;
+      user = ref.read(sessionProvider);
     }
+
+    if (user != null && user.isAgent) {
+      context.go('/agent');
+      return;
+    }
+
+    if (user != null) {
+      // Fetch and save the passenger's tickets locally in the background, so
+      // they are available offline (ticket JSON + private ticket images).
+      startBackgroundTicketSync(ref);
+      context.go('/home');
+      return;
+    }
+
     context.go('/onboarding');
   }
 

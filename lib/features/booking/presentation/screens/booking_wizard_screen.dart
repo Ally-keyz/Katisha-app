@@ -55,7 +55,8 @@ class _GroupedRow {
 /// a lazy `ListView.builder`. Building it eagerly with nested `for` loops in
 /// `ListView.children` laid out every group and every city up front.
 List<_GroupedRow> _flattenGroupedRows(
-    List<MapEntry<String, List<String>>> groups) {
+  List<MapEntry<String, List<String>>> groups,
+) {
   final rows = <_GroupedRow>[];
   for (final entry in groups) {
     rows.add(_GroupedRow.header(entry.key));
@@ -88,9 +89,25 @@ const _eastAfricaByCountry = <String, List<String>>{
   'Mozambique': ['Nampula'],
   'South Africa': ['Johannesburg'],
   'Tanzania': [
-    'Arusha', 'Bukoba', 'Dar es Salaam', 'Dodoma', 'Iringa', 'Kabanga',
-    'Kahama', 'Kigoma', 'Manyoni', 'Mbeya', 'Morogoro', 'Moshi', 'Mwanza',
-    'Nzega', 'Shinyanga', 'Singida', 'Sumbawanga', 'Tabora', 'Tunduma',
+    'Arusha',
+    'Bukoba',
+    'Dar es Salaam',
+    'Dodoma',
+    'Iringa',
+    'Kabanga',
+    'Kahama',
+    'Kigoma',
+    'Manyoni',
+    'Mbeya',
+    'Morogoro',
+    'Moshi',
+    'Mwanza',
+    'Nzega',
+    'Shinyanga',
+    'Singida',
+    'Sumbawanga',
+    'Tabora',
+    'Tunduma',
   ],
   'Uganda': ['Busia', 'Jinja', 'Kampala', 'Mbarara', 'Ntugamo'],
   'Zambia': ['Lusaka', 'Mutambashwala'],
@@ -108,7 +125,8 @@ class BookingWizardScreen extends ConsumerStatefulWidget {
   const BookingWizardScreen({super.key, this.extra, this.embedded = false});
 
   @override
-  ConsumerState<BookingWizardScreen> createState() => _BookingWizardScreenState();
+  ConsumerState<BookingWizardScreen> createState() =>
+      _BookingWizardScreenState();
 }
 
 class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
@@ -274,22 +292,33 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   String? _stepError() {
     switch (_currentStep) {
       case 0:
-        if (_origin == null || _origin!.isEmpty) return 'Please select an origin city';
-        if (_destination == null || _destination!.isEmpty) return AppLocalizations.of(context).translate('select_destination');
-        if (_origin == _destination) return 'Origin and destination must be different';
+        if (_origin == null || _origin!.isEmpty)
+          return 'Please select an origin city';
+        if (_destination == null || _destination!.isEmpty)
+          return AppLocalizations.of(context).translate('select_destination');
+        if (_origin == _destination)
+          return 'Origin and destination must be different';
         return null;
       case 1:
-        if (_selectedRoute == null) return AppLocalizations.of(context).translate('select_agency_continue');
+        if (_selectedRoute == null)
+          return AppLocalizations.of(
+            context,
+          ).translate('select_agency_continue');
         return null;
       case 2:
-        if (!_datePicked) return AppLocalizations.of(context).translate('select_travel_date');
-        if (_selectedTime == null) return AppLocalizations.of(context).translate('select_departure_time');
+        if (!_datePicked)
+          return AppLocalizations.of(context).translate('select_travel_date');
+        if (_selectedTime == null)
+          return AppLocalizations.of(
+            context,
+          ).translate('select_departure_time');
         return null;
       case 3:
         if (_seatCount < 1) return 'At least 1 seat is required';
         return null;
       case 4:
-        if (_phoneController.text.replaceAll(RegExp(r'[^0-9]'), '').length < 9) return 'Please enter a valid phone number';
+        if (_phoneController.text.replaceAll(RegExp(r'[^0-9]'), '').length < 9)
+          return 'Please enter a valid phone number';
         return null;
       default:
         return null;
@@ -308,9 +337,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   Future<void> _fetchAgencyWorkingHours(String agencyId) async {
     try {
-      final response = await ref.read(apiClientProvider).get('/agencies/public/$agencyId');
+      final response = await ref
+          .read(apiClientProvider)
+          .get('/agencies/public/$agencyId');
       final data = response.data;
-      final agency = data is Map<String, dynamic> ? (data['agency'] as Map<String, dynamic>?) : null;
+      final agency = data is Map<String, dynamic>
+          ? (data['agency'] as Map<String, dynamic>?)
+          : null;
       final hours = agency?['workingHours'];
       if (hours is List) {
         if (!mounted) return;
@@ -369,18 +402,28 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   bool _isTimeSlotAvailable(String time) {
-    // East African cross-border booking requires 2+ days advance (enforced on
-    // the calendar), so no same-day/curfew restrictions apply to time slots.
+    final minutes = _parseHhMm(time);
+    if (minutes == null) return false;
+
+    // Match the web: on a same-day trip only departures that are still ahead
+    // are offered, so the last bookable departure can never be in the past.
+    final now = DateTime.now();
+    if (_isSameDay(_selectedDate, now)) {
+      final nowMinutes = now.hour * 60 + now.minute;
+      if (minutes <= nowMinutes) return false;
+    }
+
     final windows = _resolveAvailabilityWindows();
     if (windows == null) return true;
     if (windows.isEmpty) return false;
-    final minutes = _parseHhMm(time);
-    if (minutes == null) return false;
     for (final w in windows) {
       if (minutes >= w.$1 && minutes < w.$2) return true;
     }
     return false;
   }
+
+  bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
 
   // ── Route search ──
 
@@ -405,8 +448,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       (routes) => setState(() {
         // Mirror the web normalizeAgencyRoutes: only East African routes are
         // bookable.
-        _routes =
-            routes.where((r) => r.type == 'east_africa').toList();
+        _routes = routes.where((r) => r.type == 'east_africa').toList();
         _searchingRoutes = false;
       }),
     );
@@ -438,9 +480,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     setState(() => _submitError = null);
 
     // Default pickup point to Bus Station if route has stops but none selected
-    if (_currentStep == 1 && _selectedRoute != null && _selectedRoute!.stops.any((s) =>
-        s.name.toLowerCase() != _origin!.toLowerCase() &&
-        s.name.toLowerCase() != _destination!.toLowerCase()) && _selectedPickupPoint == null) {
+    if (_currentStep == 1 &&
+        _selectedRoute != null &&
+        _selectedRoute!.stops.any(
+          (s) =>
+              s.name.toLowerCase() != _origin!.toLowerCase() &&
+              s.name.toLowerCase() != _destination!.toLowerCase(),
+        ) &&
+        _selectedPickupPoint == null) {
       setState(() => _selectedPickupPoint = 'Bus Station');
     }
 
@@ -536,8 +583,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     });
   }
 
-/// Pull-to-refresh: reset the whole wizard back to the first route-selection
-/// step so the user can start a fresh booking flow.
+  /// Pull-to-refresh: reset the whole wizard back to the first route-selection
+  /// step so the user can start a fresh booking flow.
   Future<void> _refreshWizard() async {
     _autoAdvanceTimer?.cancel();
     setState(() {
@@ -658,10 +705,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         final accessToken = bookingData['accessToken'] as String?;
         final refreshToken = bookingData['refreshToken'] as String?;
         if (accessToken != null && refreshToken != null) {
-          ref.read(apiClientProvider).setTokens(
-                accessToken: accessToken,
-                refreshToken: refreshToken,
-              );
+          ref
+              .read(apiClientProvider)
+              .setTokens(accessToken: accessToken, refreshToken: refreshToken);
           // The user is now logged in — sync their tickets to local storage so
           // they can be viewed offline.
           startBackgroundTicketSync(ref);
@@ -674,12 +720,26 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         } else {
           bookingObj = bookingData;
         }
-        final bookingId = bookingObj['_id'] as String? ?? bookingObj['id'] as String? ?? '';
-        final refCode = bookingObj['referenceCode'] as String? ?? bookingData['referenceCode'] as String? ?? '';
-        final ticketImg = bookingObj['ticketImage'] as String? ?? bookingData['ticketImage'] as String?;
-        final paymentStatus = bookingObj['paymentStatus'] as String? ?? bookingData['paymentStatus'] as String? ?? 'pending';
-        final status = bookingObj['status'] as String? ?? bookingData['status'] as String? ?? 'pending';
-        final rejectionReason = bookingObj['rejectionReason'] as String? ?? bookingData['rejectionReason'] as String?;
+        final bookingId =
+            bookingObj['_id'] as String? ?? bookingObj['id'] as String? ?? '';
+        final refCode =
+            bookingObj['referenceCode'] as String? ??
+            bookingData['referenceCode'] as String? ??
+            '';
+        final ticketImg =
+            bookingObj['ticketImage'] as String? ??
+            bookingData['ticketImage'] as String?;
+        final paymentStatus =
+            bookingObj['paymentStatus'] as String? ??
+            bookingData['paymentStatus'] as String? ??
+            'pending';
+        final status =
+            bookingObj['status'] as String? ??
+            bookingData['status'] as String? ??
+            'pending';
+        final rejectionReason =
+            bookingObj['rejectionReason'] as String? ??
+            bookingData['rejectionReason'] as String?;
 
         // Persist the booking locally right away so it is always available
         // offline once purchased (internet is guaranteed at this moment).
@@ -691,7 +751,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         if (paymentStatus == 'paid') {
           ref.read(soundServiceProvider).vibrate();
           _scheduleDepartureAlerts(bookingId);
-          ref.read(localNotificationStoreProvider).add(
+          ref
+              .read(localNotificationStoreProvider)
+              .add(
                 title: 'Booking Confirmed',
                 message:
                     'Your booking ${refCode.isEmpty ? 'was' : refCode} confirmed.',
@@ -767,11 +829,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     if (bookingId.isEmpty || departure == null) return;
     if (departure.isBefore(DateTime.now())) return;
 
-    ref.read(notificationServiceProvider).scheduleJourneyAlerts(
-      bookingId: bookingId,
-      routeName: routeName,
-      departureTime: departure,
-    );
+    ref
+        .read(notificationServiceProvider)
+        .scheduleJourneyAlerts(
+          bookingId: bookingId,
+          routeName: routeName,
+          departureTime: departure,
+        );
   }
 
   /// Immediately persists a freshly-created booking (JSON + private ticket
@@ -801,8 +865,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         }
       } catch (_) {}
     }
-    final ticketImg =
-        ticketImage ?? (bookingObj['ticketImage'] as String?);
+    final ticketImg = ticketImage ?? (bookingObj['ticketImage'] as String?);
     if (ticketImg == null || ticketImg.isEmpty) return;
     if (await store.getTicketImagePath(bookingId) != null) return;
     try {
@@ -877,8 +940,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   void _handlePaymentOutcomeFromBooking(Booking booking) {
     // trackBooking returns a PII-limited booking without _id, so fall back to
     // the id held from the original create response where needed.
-    final bookingId =
-        booking.id.isNotEmpty ? booking.id : (_paymentWaitingBookingId ?? '');
+    final bookingId = booking.id.isNotEmpty
+        ? booking.id
+        : (_paymentWaitingBookingId ?? '');
     if (booking.paymentStatus == 'paid') {
       _handlePaymentOutcome(
         paid: true,
@@ -934,10 +998,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           const {'paymentStatus': 'paid'},
         );
       }
-      ref.read(localNotificationStoreProvider).add(
+      ref
+          .read(localNotificationStoreProvider)
+          .add(
             title: 'Payment Confirmed!',
-            message:
-                'Your booking ${referenceCode ?? ''} has been confirmed.',
+            message: 'Your booking ${referenceCode ?? ''} has been confirmed.',
             type: 'payment',
             entityId: bookingId,
           );
@@ -990,17 +1055,21 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   void _scheduleNextPaymentPoll() {
     _paymentPollTimer?.cancel();
-    _paymentPollTimer =
-        Timer(Duration(milliseconds: _paymentPollIntervalMs), () async {
-      if (!mounted) return;
-      await _verifyPayment();
-      if (!mounted) return;
-      // Keep polling only while we're still waiting on a terminal outcome.
-      if (!_paymentWaiting) return;
-      _paymentPollIntervalMs =
-          (_paymentPollIntervalMs * 2).clamp(_minPaymentPollMs, _maxPaymentPollMs);
-      _scheduleNextPaymentPoll();
-    });
+    _paymentPollTimer = Timer(
+      Duration(milliseconds: _paymentPollIntervalMs),
+      () async {
+        if (!mounted) return;
+        await _verifyPayment();
+        if (!mounted) return;
+        // Keep polling only while we're still waiting on a terminal outcome.
+        if (!_paymentWaiting) return;
+        _paymentPollIntervalMs = (_paymentPollIntervalMs * 2).clamp(
+          _minPaymentPollMs,
+          _maxPaymentPollMs,
+        );
+        _scheduleNextPaymentPoll();
+      },
+    );
   }
 
   void _stopPaymentPolling() {
@@ -1089,7 +1158,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final message = (reason != null && reason.isNotEmpty)
         ? 'Your payment for $referenceCode failed. $reason'
         : 'Your payment for $referenceCode failed. Please check your mobile money balance and try again.';
-    ref.read(localNotificationStoreProvider).add(
+    ref
+        .read(localNotificationStoreProvider)
+        .add(
           title: 'Payment Failed',
           message: message,
           type: 'booking_rejected',
@@ -1153,8 +1224,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       const SizedBox(height: AppSpacing.sm),
                     ],
                     _buildNavigationButtons(),
-                    const SizedBox(height: AppSpacing.sm),
-                    _buildFooterInfo(),
                   ],
                 ),
               ),
@@ -1244,7 +1313,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               Container(
                 width: 8,
                 height: 2,
-                color: isDone || isActive ? AppColors.primary : AppColors.border,
+                color: isDone || isActive
+                    ? AppColors.primary
+                    : AppColors.border,
               ),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
@@ -1252,11 +1323,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 color: isActive
                     ? AppColors.primary
                     : isDone
-                        ? AppColors.primaryLight
-                        : AppColors.white,
+                    ? AppColors.primaryLight
+                    : AppColors.white,
                 borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
                 border: Border.all(
-                  color: isActive || isDone ? AppColors.primary : AppColors.border,
+                  color: isActive || isDone
+                      ? AppColors.primary
+                      : AppColors.border,
                   width: 1,
                 ),
               ),
@@ -1264,11 +1337,17 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   isDone
-                      ? const Icon(Icons.check, size: 10, color: AppColors.primary)
+                      ? const Icon(
+                          Icons.check,
+                          size: 10,
+                          color: AppColors.primary,
+                        )
                       : Icon(
                           _stepIcons[i],
                           size: 10,
-                          color: isActive ? AppColors.white : AppColors.textMuted,
+                          color: isActive
+                              ? AppColors.white
+                              : AppColors.textMuted,
                         ),
                 ],
               ),
@@ -1295,10 +1374,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             alignment: Alignment.centerLeft,
             child: FractionallySizedBox(
               widthFactor: animatedProgress.clamp(0.0, 1.0),
-              child: Container(
-                height: 2,
-                color: AppColors.primary,
-              ),
+              child: Container(height: 2, color: AppColors.primary),
             ),
           ),
         );
@@ -1412,7 +1488,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       onTap: onTap,
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: 14),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: 14,
+        ),
         decoration: BoxDecoration(
           color: AppColors.white,
           borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
@@ -1430,7 +1509,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 ),
               ),
             ),
-            const Icon(Icons.keyboard_arrow_down, size: 20, color: AppColors.textMuted),
+            const Icon(
+              Icons.keyboard_arrow_down,
+              size: 20,
+              color: AppColors.textMuted,
+            ),
           ],
         ),
       ),
@@ -1467,22 +1550,28 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             final filtered = q.isEmpty
                 ? baseFiltered
                 : baseFiltered
-                    .where((c) => c.toLowerCase().contains(q))
-                    .toList();
+                      .where((c) => c.toLowerCase().contains(q))
+                      .toList();
             final filteredGroups = <MapEntry<String, List<String>>>[];
             if (groups != null) {
               for (final entry in groups.entries) {
-                if (!originCountry && entry.key.toLowerCase() == 'rwanda') continue;
+                if (!originCountry && entry.key.toLowerCase() == 'rwanda')
+                  continue;
                 final cities = entry.value
-                    .where((c) =>
-                        c != exclude && (q.isEmpty || c.toLowerCase().contains(q)))
+                    .where(
+                      (c) =>
+                          c != exclude &&
+                          (q.isEmpty || c.toLowerCase().contains(q)),
+                    )
                     .toList();
                 if (cities.isEmpty) continue;
                 filteredGroups.add(MapEntry(entry.key, cities));
               }
             }
             // Flat header/city rows so the list can build lazily.
-            final rows = hasGroups ? _flattenGroupedRows(filteredGroups) : const <_GroupedRow>[];
+            final rows = hasGroups
+                ? _flattenGroupedRows(filteredGroups)
+                : const <_GroupedRow>[];
 
             return KatishaModal(
               title: l10n.translate(titleKey),
@@ -1500,10 +1589,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                         style: AppTypography.bodyMedium,
                         decoration: InputDecoration(
                           hintText: l10n.translate('search_location'),
-                          hintStyle:
-                              AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
-                          prefixIcon: const Icon(Icons.search,
-                              size: 20, color: AppColors.primary),
+                          hintStyle: AppTypography.bodyMedium.copyWith(
+                            color: AppColors.textMuted,
+                          ),
+                          prefixIcon: const Icon(
+                            Icons.search,
+                            size: 20,
+                            color: AppColors.primary,
+                          ),
                           isDense: true,
                           filled: true,
                           fillColor: AppColors.white,
@@ -1512,119 +1605,135 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                             vertical: 10,
                           ),
                           border: OutlineInputBorder(
-                            borderRadius:
-                                BorderRadius.circular(AppSpacing.radiusSm),
-                            borderSide:
-                                const BorderSide(color: AppColors.primary),
+                            borderRadius: BorderRadius.circular(
+                              AppSpacing.radiusSm,
+                            ),
+                            borderSide: const BorderSide(
+                              color: AppColors.primary,
+                            ),
                           ),
                           enabledBorder: OutlineInputBorder(
-                            borderRadius:
-                                BorderRadius.circular(AppSpacing.radiusSm),
-                            borderSide:
-                                const BorderSide(color: AppColors.primary),
+                            borderRadius: BorderRadius.circular(
+                              AppSpacing.radiusSm,
+                            ),
+                            borderSide: const BorderSide(
+                              color: AppColors.primary,
+                            ),
                           ),
                           focusedBorder: OutlineInputBorder(
-                            borderRadius:
-                                BorderRadius.circular(AppSpacing.radiusSm),
+                            borderRadius: BorderRadius.circular(
+                              AppSpacing.radiusSm,
+                            ),
                             borderSide: const BorderSide(
-                                color: AppColors.primary, width: 2),
+                              color: AppColors.primary,
+                              width: 2,
+                            ),
                           ),
                         ),
                       ),
                     ),
                   Expanded(
-                    child: (hasGroups
-                            ? filteredGroups.isEmpty
-                            : filtered.isEmpty)
+                    child:
+                        (hasGroups ? filteredGroups.isEmpty : filtered.isEmpty)
                         ? Center(
                             child: Text(
                               l10n.translate('no_locations_found'),
-                              style: AppTypography.bodyMedium
-                                  .copyWith(color: AppColors.textMuted),
+                              style: AppTypography.bodyMedium.copyWith(
+                                color: AppColors.textMuted,
+                              ),
                             ),
                           )
                         : hasGroups
-                            ? ListView.builder(
-                                padding: const EdgeInsets.symmetric(
-                                    vertical: AppSpacing.xs),
-                                itemCount: rows.length,
-                                itemBuilder: (ctx, index) {
-                                  final row = rows[index];
-                                  if (row.header != null) {
-                                    return Padding(
-                                      padding: const EdgeInsets.fromLTRB(
-                                          16, 14, 16, 4),
-                                      child: Text(
-                                        row.header!,
-                                        style: AppTypography.labelSmall.copyWith(
-                                          color: AppColors.textMuted,
-                                          fontWeight: FontWeight.w700,
-                                          letterSpacing: 0.6,
-                                        ),
-                                      ),
-                                    );
-                                  }
-                                  final city = row.city!;
-                                  final isSelected = city == currentValue;
-                                  return ListTile(
-                                    dense: true,
-                                    selected: isSelected,
-                                    selectedTileColor: AppColors.primaryLight,
-                                    leading: Icon(
-                                      isSelected
-                                          ? Icons.radio_button_checked
-                                          : Icons.radio_button_unchecked,
-                                      color: isSelected
-                                          ? AppColors.primary
-                                          : AppColors.textMuted,
-                                      size: 20,
+                        ? ListView.builder(
+                            padding: const EdgeInsets.symmetric(
+                              vertical: AppSpacing.xs,
+                            ),
+                            itemCount: rows.length,
+                            itemBuilder: (ctx, index) {
+                              final row = rows[index];
+                              if (row.header != null) {
+                                return Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    14,
+                                    16,
+                                    4,
+                                  ),
+                                  child: Text(
+                                    row.header!,
+                                    style: AppTypography.labelSmall.copyWith(
+                                      color: AppColors.textMuted,
+                                      fontWeight: FontWeight.w700,
+                                      letterSpacing: 0.6,
                                     ),
-                                    title: Text(
-                                      city,
-                                      style: AppTypography.bodyLarge.copyWith(
-                                        fontWeight: isSelected
-                                            ? FontWeight.w600
-                                            : FontWeight.w400,
-                                      ),
-                                    ),
-                                    onTap: () => Navigator.pop(ctx, city),
-                                  );
-                                },
-                              )
-                            : ListView.separated(
-                                padding: const EdgeInsets.symmetric(
-                                    vertical: AppSpacing.xs),
-                                itemCount: filtered.length,
-                                separatorBuilder: (_, _2) => const Divider(
-                                    height: 1, indent: 16, endIndent: 16),
-                                itemBuilder: (ctx, index) {
-                                  final city = filtered[index];
-                                  final isSelected = city == currentValue;
-                                  return ListTile(
-                                    dense: true,
-                                    selected: isSelected,
-                                    selectedTileColor: AppColors.primaryLight,
-                                    leading: Icon(
-                                      isSelected
-                                          ? Icons.radio_button_checked
-                                          : Icons.radio_button_unchecked,
-                                      color: isSelected
-                                          ? AppColors.primary
-                                          : AppColors.textMuted,
-                                      size: 20,
-                                    ),
-                                    title: Text(
-                                      city,
-                                      style: AppTypography.bodyLarge.copyWith(
-                                        fontWeight: isSelected
-                                            ? FontWeight.w600
-                                            : FontWeight.w400,
-                                      ),
-                                    ),
-                                    onTap: () => Navigator.pop(ctx, city),
-                                  );
-                                },
-                              ),
+                                  ),
+                                );
+                              }
+                              final city = row.city!;
+                              final isSelected = city == currentValue;
+                              return ListTile(
+                                dense: true,
+                                selected: isSelected,
+                                selectedTileColor: AppColors.primaryLight,
+                                leading: Icon(
+                                  isSelected
+                                      ? Icons.radio_button_checked
+                                      : Icons.radio_button_unchecked,
+                                  color: isSelected
+                                      ? AppColors.primary
+                                      : AppColors.textMuted,
+                                  size: 20,
+                                ),
+                                title: Text(
+                                  city,
+                                  style: AppTypography.bodyLarge.copyWith(
+                                    fontWeight: isSelected
+                                        ? FontWeight.w600
+                                        : FontWeight.w400,
+                                  ),
+                                ),
+                                onTap: () => Navigator.pop(ctx, city),
+                              );
+                            },
+                          )
+                        : ListView.separated(
+                            padding: const EdgeInsets.symmetric(
+                              vertical: AppSpacing.xs,
+                            ),
+                            itemCount: filtered.length,
+                            separatorBuilder: (_, _2) => const Divider(
+                              height: 1,
+                              indent: 16,
+                              endIndent: 16,
+                            ),
+                            itemBuilder: (ctx, index) {
+                              final city = filtered[index];
+                              final isSelected = city == currentValue;
+                              return ListTile(
+                                dense: true,
+                                selected: isSelected,
+                                selectedTileColor: AppColors.primaryLight,
+                                leading: Icon(
+                                  isSelected
+                                      ? Icons.radio_button_checked
+                                      : Icons.radio_button_unchecked,
+                                  color: isSelected
+                                      ? AppColors.primary
+                                      : AppColors.textMuted,
+                                  size: 20,
+                                ),
+                                title: Text(
+                                  city,
+                                  style: AppTypography.bodyLarge.copyWith(
+                                    fontWeight: isSelected
+                                        ? FontWeight.w600
+                                        : FontWeight.w400,
+                                  ),
+                                ),
+                                onTap: () => Navigator.pop(ctx, city),
+                              );
+                            },
+                          ),
                   ),
                 ],
               ),
@@ -1685,7 +1794,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           _buildLocationSelector(
             label: l10n.translate('title_agency'),
             icon: Icons.directions_bus_outlined,
-            value: _selectedRoute?.agency.name ??
+            value:
+                _selectedRoute?.agency.name ??
                 l10n.translate('select_agency_continue'),
             onTap: _openAgencyModal,
           ),
@@ -1726,7 +1836,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 ? _routes
                 : _routes.where((r) {
                     final haystack =
-                        '${r.agency.name} ${r.origin} ${r.destination}'.toLowerCase();
+                        '${r.agency.name} ${r.origin} ${r.destination}'
+                            .toLowerCase();
                     return haystack.contains(q);
                   }).toList();
 
@@ -1746,10 +1857,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       style: AppTypography.bodyMedium,
                       decoration: InputDecoration(
                         hintText: l10n.translate('search_location'),
-                        hintStyle: AppTypography.bodyMedium
-                            .copyWith(color: AppColors.textMuted),
-                        prefixIcon: const Icon(Icons.search,
-                            size: 20, color: AppColors.primary),
+                        hintStyle: AppTypography.bodyMedium.copyWith(
+                          color: AppColors.textMuted,
+                        ),
+                        prefixIcon: const Icon(
+                          Icons.search,
+                          size: 20,
+                          color: AppColors.primary,
+                        ),
                         isDense: true,
                         filled: true,
                         fillColor: AppColors.white,
@@ -1758,22 +1873,29 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                           vertical: 10,
                         ),
                         border: OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(AppSpacing.radiusSm),
-                          borderSide:
-                              const BorderSide(color: AppColors.primary),
+                          borderRadius: BorderRadius.circular(
+                            AppSpacing.radiusSm,
+                          ),
+                          borderSide: const BorderSide(
+                            color: AppColors.primary,
+                          ),
                         ),
                         enabledBorder: OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(AppSpacing.radiusSm),
-                          borderSide:
-                              const BorderSide(color: AppColors.primary),
+                          borderRadius: BorderRadius.circular(
+                            AppSpacing.radiusSm,
+                          ),
+                          borderSide: const BorderSide(
+                            color: AppColors.primary,
+                          ),
                         ),
                         focusedBorder: OutlineInputBorder(
-                          borderRadius:
-                              BorderRadius.circular(AppSpacing.radiusSm),
+                          borderRadius: BorderRadius.circular(
+                            AppSpacing.radiusSm,
+                          ),
                           borderSide: const BorderSide(
-                              color: AppColors.primary, width: 2),
+                            color: AppColors.primary,
+                            width: 2,
+                          ),
                         ),
                       ),
                     ),
@@ -1783,24 +1905,30 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                         ? Center(
                             child: Text(
                               l10n.translate('no_routes_found'),
-                              style: AppTypography.bodyMedium
-                                  .copyWith(color: AppColors.textMuted),
+                              style: AppTypography.bodyMedium.copyWith(
+                                color: AppColors.textMuted,
+                              ),
                             ),
                           )
                         : ListView.separated(
                             padding: const EdgeInsets.symmetric(
-                                vertical: AppSpacing.sm),
+                              vertical: AppSpacing.sm,
+                            ),
                             itemCount: filtered.length,
                             separatorBuilder: (_, _) => Padding(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: AppSpacing.md),
+                                horizontal: AppSpacing.md,
+                              ),
                               child: const Divider(
                                 height: AppSpacing.sm,
                                 color: AppColors.border,
                               ),
                             ),
                             itemBuilder: (context, index) => _buildAgencyRow(
-                                filtered[index], ctx, setSheetState),
+                              filtered[index],
+                              ctx,
+                              setSheetState,
+                            ),
                           ),
                   ),
                   if (_selectedRoute != null &&
@@ -1832,7 +1960,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final total = routePrice + serviceFee + onlineFee;
     final hasPromo = route.hasPromotion == true;
     final originalPrice = (route.originalPrice as int?) ?? routePrice;
-    final originalTotal = originalPrice +
+    final originalTotal =
+        originalPrice +
         systemFeeFor(route.type, originalPrice, 1).round() +
         ((originalPrice * _payoutRate).round() + _payoutFixed);
     final name = route.agency.name;
@@ -1845,9 +1974,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         });
         _fetchAgencyWorkingHours(route.agency.id);
         // No intermediate pickup points to choose: move straight on.
-        final hasPickupStops = route.stops.any((s) =>
-            s.name.toLowerCase() != _origin!.toLowerCase() &&
-            s.name.toLowerCase() != _destination!.toLowerCase());
+        final hasPickupStops = route.stops.any(
+          (s) =>
+              s.name.toLowerCase() != _origin!.toLowerCase() &&
+              s.name.toLowerCase() != _destination!.toLowerCase(),
+        );
         if (hasPickupStops) {
           setSheetState(() {});
         } else {
@@ -1858,16 +1989,16 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       child: Container(
         color: isSelected ? AppColors.primaryLight : null,
         padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.md, vertical: AppSpacing.md),
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.md,
+        ),
         child: Row(
           children: [
             Container(
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: isSelected
-                    ? AppColors.primary
-                    : AppColors.primaryLight,
+                color: isSelected ? AppColors.primary : AppColors.primaryLight,
                 borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
               ),
               child: Center(
@@ -1891,8 +2022,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                         child: Text(
                           name,
                           style: AppTypography.bodyLarge.copyWith(
-                            fontWeight:
-                                isSelected ? FontWeight.w700 : FontWeight.w600,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w600,
                           ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
@@ -1915,8 +2047,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   Text(
                     '${route.origin} → ${route.destination}'
                     '${route.estimatedDuration != null ? ' · ${route.estimatedDuration}' : ''}',
-                    style: AppTypography.bodySmall
-                        .copyWith(color: AppColors.textSub),
+                    style: AppTypography.bodySmall.copyWith(
+                      color: AppColors.textSub,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -2012,66 +2145,72 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               runSpacing: AppSpacing.sm,
               children: [
                 ..._selectedRoute!.stops
-                    .where((s) =>
-                        s.name.toLowerCase() != _origin!.toLowerCase() &&
-                        s.name.toLowerCase() != _destination!.toLowerCase())
+                    .where(
+                      (s) =>
+                          s.name.toLowerCase() != _origin!.toLowerCase() &&
+                          s.name.toLowerCase() != _destination!.toLowerCase(),
+                    )
                     .map((stop) {
-                  final isSelected = _selectedPickupPoint == stop.name;
-                  return SizedBox(
-                    width: itemWidth,
-                    child: GestureDetector(
-                      onTap: () {
-                        setState(() => _selectedPickupPoint = stop.name);
-                        _scheduleAutoAdvance();
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        padding: const EdgeInsets.all(AppSpacing.md),
-                        decoration: BoxDecoration(
-                          color: isSelected
-                              ? AppColors.primaryLight
-                              : AppColors.white,
-                          borderRadius:
-                              BorderRadius.circular(AppSpacing.radiusMd),
-                          border: Border.all(
-                            color: isSelected
-                                ? AppColors.primary
-                                : AppColors.border,
-                            width: isSelected ? 2 : 1,
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.location_on_outlined,
-                              size: 18,
+                      final isSelected = _selectedPickupPoint == stop.name;
+                      return SizedBox(
+                        width: itemWidth,
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() => _selectedPickupPoint = stop.name);
+                            _scheduleAutoAdvance();
+                          },
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 200),
+                            padding: const EdgeInsets.all(AppSpacing.md),
+                            decoration: BoxDecoration(
                               color: isSelected
-                                  ? AppColors.primary
-                                  : AppColors.textMuted,
-                            ),
-                            const SizedBox(width: AppSpacing.sm),
-                            Expanded(
-                              child: Text(
-                                stop.name,
-                                style: AppTypography.bodyMedium.copyWith(
-                                  color: isSelected
-                                      ? AppColors.primary
-                                      : AppColors.text,
-                                  fontWeight: isSelected
-                                      ? FontWeight.w600
-                                      : FontWeight.w400,
-                                ),
+                                  ? AppColors.primaryLight
+                                  : AppColors.white,
+                              borderRadius: BorderRadius.circular(
+                                AppSpacing.radiusMd,
+                              ),
+                              border: Border.all(
+                                color: isSelected
+                                    ? AppColors.primary
+                                    : AppColors.border,
+                                width: isSelected ? 2 : 1,
                               ),
                             ),
-                            if (isSelected)
-                              const Icon(Icons.check_circle,
-                                  size: 18, color: AppColors.primary),
-                          ],
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.location_on_outlined,
+                                  size: 18,
+                                  color: isSelected
+                                      ? AppColors.primary
+                                      : AppColors.textMuted,
+                                ),
+                                const SizedBox(width: AppSpacing.sm),
+                                Expanded(
+                                  child: Text(
+                                    stop.name,
+                                    style: AppTypography.bodyMedium.copyWith(
+                                      color: isSelected
+                                          ? AppColors.primary
+                                          : AppColors.text,
+                                      fontWeight: isSelected
+                                          ? FontWeight.w600
+                                          : FontWeight.w400,
+                                    ),
+                                  ),
+                                ),
+                                if (isSelected)
+                                  const Icon(
+                                    Icons.check_circle,
+                                    size: 18,
+                                    color: AppColors.primary,
+                                  ),
+                              ],
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                  );
-                }),
+                      );
+                    }),
                 SizedBox(
                   width: itemWidth,
                   child: GestureDetector(
@@ -2086,7 +2225,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                         color: _selectedPickupPoint == 'Bus Station'
                             ? AppColors.primaryLight
                             : AppColors.white,
-                        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                        borderRadius: BorderRadius.circular(
+                          AppSpacing.radiusMd,
+                        ),
                         border: Border.all(
                           color: _selectedPickupPoint == 'Bus Station'
                               ? AppColors.primary
@@ -2113,14 +2254,17 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                                     : AppColors.text,
                                 fontWeight:
                                     _selectedPickupPoint == 'Bus Station'
-                                        ? FontWeight.w600
-                                        : FontWeight.w400,
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
                               ),
                             ),
                           ),
                           if (_selectedPickupPoint == 'Bus Station')
-                            const Icon(Icons.check_circle,
-                                size: 18, color: AppColors.primary),
+                            const Icon(
+                              Icons.check_circle,
+                              size: 18,
+                              color: AppColors.primary,
+                            ),
                         ],
                       ),
                     ),
@@ -2146,7 +2290,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             Text(
               _routeError!,
               textAlign: TextAlign.center,
-              style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
+              style: AppTypography.bodyMedium.copyWith(
+                color: AppColors.textSub,
+              ),
             ),
             const SizedBox(height: AppSpacing.md),
             OutlinedButton.icon(
@@ -2176,14 +2322,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             const SizedBox(height: AppSpacing.sm),
             Text(
               l10n.translate('no_routes_subtitle'),
-              style: AppTypography.bodySmall.copyWith(color: AppColors.textMuted),
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.textMuted,
+              ),
             ),
           ],
         ),
       ),
     );
   }
-
 
   // ── Step 2: Schedule ──
 
@@ -2229,14 +2376,35 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
-  /// East African cross-border travel requires at least 2 days advance
-  /// booking (matches the web minDays = 2).
-  static const int _advanceBookingDays = 2;
+  /// Slots the selected route can actually depart on. Falls back to the
+  /// half-hour grid when the route has no explicit departure times.
+  List<String> _baseSlotsForAvailability() {
+    final routeTimes = (_selectedRoute?.departureTimes ?? const <String>[])
+        .map((t) => t.trim())
+        .where((t) => t.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort();
+    return routeTimes.isNotEmpty ? routeTimes : _allHalfHourSlots();
+  }
 
-  /// First date the wizard lets the user book.
+  bool _hasBookableSlotToday() {
+    final now = DateTime.now();
+    final nowMinutes = now.hour * 60 + now.minute;
+    return _baseSlotsForAvailability().any((slot) {
+      final minutes = _parseHhMm(slot);
+      return minutes != null && minutes > nowMinutes;
+    });
+  }
+
+  /// First date the wizard lets the user book: today while a departure still
+  /// remains, otherwise tomorrow. Mirrors the website's `earliestBookableDate`.
   DateTime get _minSelectableDate {
     final now = DateTime.now();
-    return DateTime(now.year, now.month, now.day + _advanceBookingDays);
+    final today = DateTime(now.year, now.month, now.day);
+    return _hasBookableSlotToday()
+        ? today
+        : today.add(const Duration(days: 1));
   }
 
   /// Month containing [_minSelectableDate]; earlier months have no bookable
@@ -2289,9 +2457,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         return KatishaModal(
           title: l10n.translate('choose_available_hour'),
           closeLabel: l10n.translate('close'),
-          child: _buildTimeSlots(
-            onTimePicked: () => Navigator.pop(ctx),
-          ),
+          child: _buildTimeSlots(onTimePicked: () => Navigator.pop(ctx)),
         );
       },
     );
@@ -2327,7 +2493,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final canGoBack = monthStart.isAfter(_minSelectableMonth);
 
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(AppSpacing.sm),
       decoration: BoxDecoration(
         color: AppColors.white,
         borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
@@ -2347,20 +2513,19 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               IconButton(
                 onPressed: canGoBack
                     ? () => setState(() {
-                          _calendarMonth = DateTime(year, month - 1);
-                        })
+                        _calendarMonth = DateTime(year, month - 1);
+                      })
                     : null,
                 icon: const Icon(Icons.chevron_left, size: 20),
                 color: AppColors.textSub,
                 disabledColor: AppColors.textMuted.withValues(alpha: 0.35),
-                tooltip: canGoBack ? null : l10n.translate('no_dates_available'),
+                tooltip: canGoBack
+                    ? null
+                    : l10n.translate('no_dates_available'),
                 padding: EdgeInsets.zero,
                 constraints: const BoxConstraints(),
               ),
-              Text(
-                _monthName(month),
-                style: AppTypography.titleMedium,
-              ),
+              Text(_monthName(month), style: AppTypography.titleMedium),
               IconButton(
                 onPressed: () => setState(() {
                   _calendarMonth = DateTime(year, month + 1);
@@ -2375,16 +2540,18 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           const SizedBox(height: AppSpacing.sm),
           Row(
             children: ['S', 'M', 'T', 'W', 'T', 'F', 'S']
-                .map((d) => Expanded(
-                      child: Center(
-                        child: Text(
-                          d,
-                          style: AppTypography.labelSmall.copyWith(
-                            color: AppColors.textMuted,
-                          ),
+                .map(
+                  (d) => Expanded(
+                    child: Center(
+                      child: Text(
+                        d,
+                        style: AppTypography.labelSmall.copyWith(
+                          color: AppColors.textMuted,
                         ),
                       ),
-                    ))
+                    ),
+                  ),
+                )
                 .toList(),
           ),
           const SizedBox(height: AppSpacing.xs),
@@ -2400,80 +2567,107 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               ),
             )
           else
-            GridView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 7,
-                childAspectRatio: 1,
-              ),
-              itemCount: leadingBlanks + availableCount,
-              itemBuilder: (context, index) {
-                // The grid starts at the first bookable day, so the remaining
-                // dates sit at the top of the panel instead of under a block of
-                // empty rows.
-                if (index < leadingBlanks) return const SizedBox.shrink();
-                final day = firstAvailableDay + index - leadingBlanks;
-                final date = DateTime(year, month, day);
-                final isSelected = date.year == _selectedDate.year &&
-                    date.month == _selectedDate.month &&
-                    date.day == _selectedDate.day;
-                final isToday = date.year == today.year &&
-                    date.month == today.month &&
-                    date.day == today.day;
+            LayoutBuilder(
+              builder: (context, constraints) {
+                // Seven equal columns; the circle fills most of its cell and
+                // scales down on narrow screens so it can never overflow.
+                const double columnSpacing = 2;
+                final cellWidth =
+                    (constraints.maxWidth - columnSpacing * 6) / 7;
+                final diameter = (cellWidth - 2).clamp(34.0, 52.0);
+                final dayFontSize = (diameter * 0.42).clamp(17.0, 21.0);
 
-                return GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      _selectedDate = date;
-                      _datePicked = true;
-                      _selectedTime = null;
-                    });
-                    // Bring the departure-time selection into view after a date
-                    // is picked.
-                    _scrollToDepartureTime();
-                    onDatePicked?.call();
-                  },
-                  child: Center(
-                    child: Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: isSelected
-                            ? AppColors.primary
-                            : isToday
-                                ? AppColors.primaryLight
-                                : null,
-                        // Round date buttons rather than rounded squares.
-                        shape: BoxShape.circle,
-                        boxShadow: isSelected
-                            ? [
-                                BoxShadow(
-                                  color:
-                                      AppColors.primary.withValues(alpha: 0.45),
-                                  blurRadius: 10,
-                                  spreadRadius: -3,
-                                  offset: const Offset(0, 3),
-                                ),
-                              ]
-                            : null,
-                      ),
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 7,
+                    childAspectRatio: 1,
+                    mainAxisSpacing: 4,
+                    crossAxisSpacing: columnSpacing,
+                  ),
+                  itemCount: leadingBlanks + availableCount,
+                  itemBuilder: (context, index) {
+                    // The grid starts at the first bookable day, so the
+                    // remaining dates sit at the top of the panel instead of
+                    // under a block of empty rows.
+                    if (index < leadingBlanks) return const SizedBox.shrink();
+                    final day = firstAvailableDay + index - leadingBlanks;
+                    final date = DateTime(year, month, day);
+                    final isSelected =
+                        date.year == _selectedDate.year &&
+                        date.month == _selectedDate.month &&
+                        date.day == _selectedDate.day;
+                    final isToday =
+                        date.year == today.year &&
+                        date.month == today.month &&
+                        date.day == today.day;
+
+                    return GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _selectedDate = date;
+                          _datePicked = true;
+                          _selectedTime = null;
+                        });
+                        // Bring the departure-time selection into view after a
+                        // date is picked.
+                        _scrollToDepartureTime();
+                        onDatePicked?.call();
+                      },
                       child: Center(
-                        child: Text(
-                          '$day',
-                          style: AppTypography.bodyMedium.copyWith(
+                        child: Container(
+                          width: diameter,
+                          height: diameter,
+                          decoration: BoxDecoration(
                             color: isSelected
-                                ? AppColors.white
+                                ? AppColors.primary
                                 : isToday
+                                ? AppColors.primaryLight
+                                : AppColors.white,
+                            // Modern calendar look: every date is a small
+                            // circle outlined in the brand blue.
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: isSelected || isToday
+                                  ? AppColors.primary
+                                  : AppColors.primary.withValues(alpha: 0.30),
+                              width: isSelected || isToday ? 1.8 : 1.2,
+                            ),
+                            boxShadow: isSelected
+                                ? [
+                                    BoxShadow(
+                                      color: AppColors.primary.withValues(
+                                        alpha: 0.35,
+                                      ),
+                                      blurRadius: 10,
+                                      spreadRadius: -3,
+                                      offset: const Offset(0, 3),
+                                    ),
+                                  ]
+                                : null,
+                          ),
+                          child: Center(
+                            child: Text(
+                              '$day',
+                              style: AppTypography.bodyMedium.copyWith(
+                                fontSize: dayFontSize,
+                                height: 1,
+                                color: isSelected
+                                    ? AppColors.white
+                                    : isToday
                                     ? AppColors.primaryDark
                                     : AppColors.text,
-                            fontWeight:
-                                isSelected ? FontWeight.w700 : FontWeight.w500,
+                                fontWeight: isSelected || isToday
+                                    ? FontWeight.w700
+                                    : FontWeight.w600,
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 );
               },
             ),
@@ -2486,7 +2680,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final slots = <String>[];
     for (var h = 0; h < 24; h++) {
       for (var m = 0; m < 60; m += 30) {
-        slots.add('${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}');
+        slots.add(
+          '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}',
+        );
       }
     }
     return slots;
@@ -2539,7 +2735,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   ),
                 ),
                 const SizedBox(width: AppSpacing.sm),
-                Text(title, style: AppTypography.labelMedium.copyWith(color: AppColors.textSub)),
+                Text(
+                  title,
+                  style: AppTypography.labelMedium.copyWith(
+                    color: AppColors.textSub,
+                  ),
+                ),
               ],
             ),
           ),
@@ -2547,12 +2748,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              // Four compact columns instead of three tall ones: the slots are
-              // short labels, so they don't need a 50px-tall button.
-              crossAxisCount: 4,
+              // Three roomy columns: the slot labels are short, so each cell
+              // gets both extra width and extra height, making the buttons
+              // larger and easier to tap.
+              crossAxisCount: 3,
               crossAxisSpacing: AppSpacing.sm,
               mainAxisSpacing: AppSpacing.sm,
-              mainAxisExtent: 40,
+              mainAxisExtent: 64,
             ),
             itemCount: availableSlots.length,
             itemBuilder: (context, index) {
@@ -2567,14 +2769,21 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 child: Container(
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: isSelected ? AppColors.primary : AppColors.primaryLight,
+                    color: isSelected
+                        ? AppColors.primary
+                        : AppColors.primaryLight,
                     borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                   ),
                   child: Text(
                     slot,
                     style: AppTypography.labelLarge.copyWith(
-                      color: isSelected ? AppColors.white : AppColors.primaryDark,
-                      fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                      fontSize: 17,
+                      color: isSelected
+                          ? AppColors.white
+                          : AppColors.primaryDark,
+                      fontWeight: isSelected
+                          ? FontWeight.w700
+                          : FontWeight.w600,
                     ),
                   ),
                 ),
@@ -2659,8 +2868,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               ),
               const SizedBox(height: AppSpacing.md),
               Text(
-                _seatCount == 1 ? l10n.translate('1_seat_selected') : l10n.translate('n_seats_selected').replaceAll('%d', '$_seatCount'),
-                style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
+                _seatCount == 1
+                    ? l10n.translate('1_seat_selected')
+                    : l10n
+                          .translate('n_seats_selected')
+                          .replaceAll('%d', '$_seatCount'),
+                style: AppTypography.bodyMedium.copyWith(
+                  color: AppColors.textSub,
+                ),
               ),
             ],
           ),
@@ -2669,10 +2884,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
-  Widget _buildSeatButton({
-    required IconData icon,
-    VoidCallback? onPressed,
-  }) {
+  Widget _buildSeatButton({required IconData icon, VoidCallback? onPressed}) {
     return GestureDetector(
       onTap: onPressed,
       child: Container(
@@ -2682,7 +2894,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           color: onPressed != null ? AppColors.white : AppColors.surface,
           borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
           border: Border.all(
-            color: onPressed != null ? AppColors.border : AppColors.border.withValues(alpha: 0.5),
+            color: onPressed != null
+                ? AppColors.border
+                : AppColors.border.withValues(alpha: 0.5),
             width: 2,
           ),
         ),
@@ -2699,9 +2913,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   Widget _buildPaymentStep() {
     final l10n = AppLocalizations.of(context);
-    final effectivePrice = _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
+    final effectivePrice =
+        _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
     final fareTotal = effectivePrice * _seatCount;
-    final serviceFee = systemFeeFor(_selectedRoute?.type, effectivePrice, _seatCount).round();
+    final serviceFee = systemFeeFor(
+      _selectedRoute?.type,
+      effectivePrice,
+      _seatCount,
+    ).round();
     final totalAmount = fareTotal + serviceFee;
     final onlineFee = (fareTotal * _payoutRate).round() + _payoutFixed;
     final onlineTotal = totalAmount + onlineFee;
@@ -2757,11 +2976,17 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               const SizedBox(height: AppSpacing.xs),
               Text(
                 '$_seatCount ${_seatCount == 1 ? 'seat' : 'seats'}  •  ${_selectedRoute?.origin ?? ''} → ${_selectedRoute?.destination ?? ''}',
-                style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
+                style: AppTypography.bodySmall.copyWith(
+                  color: AppColors.textSub,
+                ),
                 textAlign: TextAlign.center,
               ),
               const Divider(height: AppSpacing.xl),
-              _buildSummaryRow(l10n.translate('total'), '${_formatAmount(onlineTotal)} RWF', isBold: true),
+              _buildSummaryRow(
+                l10n.translate('total'),
+                '${_formatAmount(onlineTotal)} RWF',
+                isBold: true,
+              ),
             ],
           ),
         ),
@@ -2836,9 +3061,14 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // being stranded at the bottom of the tall panel on a long screen.
   Widget _buildOnlinePaymentModal() {
     final l10n = AppLocalizations.of(context);
-    final effectivePrice = _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
+    final effectivePrice =
+        _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
     final fareTotal = effectivePrice * _seatCount;
-    final serviceFee = systemFeeFor(_selectedRoute?.type, effectivePrice, _seatCount).round();
+    final serviceFee = systemFeeFor(
+      _selectedRoute?.type,
+      effectivePrice,
+      _seatCount,
+    ).round();
     final totalAmount = fareTotal + serviceFee;
     final onlineFee = (fareTotal * _payoutRate).round() + _payoutFixed;
     final onlineTotal = totalAmount + onlineFee;
@@ -2870,7 +3100,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   ),
                   child: Column(
                     children: [
-                      _buildSummaryRow(l10n.translate('total'), '${_formatAmount(onlineTotal)} RWF', isBold: true),
+                      _buildSummaryRow(
+                        l10n.translate('total'),
+                        '${_formatAmount(onlineTotal)} RWF',
+                        isBold: true,
+                      ),
                     ],
                   ),
                 ),
@@ -2884,29 +3118,47 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     style: AppTypography.bodyLarge,
                     decoration: InputDecoration(
                       hintText: 'Enter your full name',
-                      hintStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
+                      hintStyle: AppTypography.bodyMedium.copyWith(
+                        color: AppColors.textMuted,
+                      ),
                       prefixIcon: const Icon(Icons.person_outline, size: 20),
                       filled: true,
                       fillColor: AppColors.white,
                       errorText: nameError.isEmpty ? null : nameError,
                       errorMaxLines: 2,
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                        borderRadius: BorderRadius.circular(
+                          AppSpacing.radiusMd,
+                        ),
                         borderSide: BorderSide(
-                          color: nameError.isEmpty ? AppColors.border : AppColors.error,
+                          color: nameError.isEmpty
+                              ? AppColors.border
+                              : AppColors.error,
                         ),
                       ),
                       enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                        borderRadius: BorderRadius.circular(
+                          AppSpacing.radiusMd,
+                        ),
                         borderSide: BorderSide(
-                          color: nameError.isEmpty ? AppColors.border : AppColors.error,
+                          color: nameError.isEmpty
+                              ? AppColors.border
+                              : AppColors.error,
                         ),
                       ),
                       focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                        borderSide: const BorderSide(color: AppColors.primary, width: 2),
+                        borderRadius: BorderRadius.circular(
+                          AppSpacing.radiusMd,
+                        ),
+                        borderSide: const BorderSide(
+                          color: AppColors.primary,
+                          width: 2,
+                        ),
                       ),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.md),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.md,
+                        vertical: AppSpacing.md,
+                      ),
                     ),
                   ),
                   const SizedBox(height: AppSpacing.lg),
@@ -2922,7 +3174,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                   decoration: InputDecoration(
                     hintText: '07X XXX XXXX or 2507XXXXXXXX',
-                    hintStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
+                    hintStyle: AppTypography.bodyMedium.copyWith(
+                      color: AppColors.textMuted,
+                    ),
                     prefixIcon: const Icon(Icons.phone_outlined, size: 20),
                     filled: true,
                     fillColor: AppColors.white,
@@ -2931,27 +3185,40 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                       borderSide: BorderSide(
-                        color: phoneError.isEmpty ? AppColors.border : AppColors.error,
+                        color: phoneError.isEmpty
+                            ? AppColors.border
+                            : AppColors.error,
                       ),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                       borderSide: BorderSide(
-                        color: phoneError.isEmpty ? AppColors.border : AppColors.error,
+                        color: phoneError.isEmpty
+                            ? AppColors.border
+                            : AppColors.error,
                       ),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                      borderSide: const BorderSide(color: AppColors.primary, width: 2),
+                      borderSide: const BorderSide(
+                        color: AppColors.primary,
+                        width: 2,
+                      ),
                     ),
                     counterText: '',
-                    contentPadding: const EdgeInsets.symmetric(horizontal: AppSpacing.md, vertical: AppSpacing.md),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: AppSpacing.md,
+                      vertical: AppSpacing.md,
+                    ),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 Text(
                   l10n.translate('account_auto_created'),
-                  style: AppTypography.bodySmall.copyWith(color: AppColors.textMuted, fontSize: 12),
+                  style: AppTypography.bodySmall.copyWith(
+                    color: AppColors.textMuted,
+                    fontSize: 12,
+                  ),
                 ),
                 const SizedBox(height: AppSpacing.lg),
                 // Pay button directly after the last input rather than pinned in
@@ -2965,12 +3232,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                         : () {
                             final nameOk =
                                 _guestNameController.text.trim().isNotEmpty ||
-                                    _isLoggedIn;
-                            final digits = _phoneController.text
-                                .replaceAll(RegExp(r'[^0-9]'), '');
+                                _isLoggedIn;
+                            final digits = _phoneController.text.replaceAll(
+                              RegExp(r'[^0-9]'),
+                              '',
+                            );
                             setModalState(() {
-                              nameError =
-                                  nameOk ? '' : l10n.translate('please_enter_name');
+                              nameError = nameOk
+                                  ? ''
+                                  : l10n.translate('please_enter_name');
                               phoneError = digits.length >= 9
                                   ? ''
                                   : 'Please enter a valid payment phone number';
@@ -2987,7 +3257,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       disabledBackgroundColor: AppColors.textMuted,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                        borderRadius: BorderRadius.circular(
+                          AppSpacing.radiusMd,
+                        ),
                       ),
                       elevation: 0,
                     ),
@@ -3045,7 +3317,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 style: OutlinedButton.styleFrom(
                   foregroundColor: AppColors.text,
                   side: const BorderSide(color: AppColors.border, width: 2),
-                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 8,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                   ),
@@ -3059,11 +3334,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               onPressed: _isSubmitting
                   ? null
                   : _currentStep == 4
-                      ? () {
-                          ref.read(soundServiceProvider).vibrate();
-                          _openOnlinePaymentModal();
-                        }
-                      : _goNext,
+                  ? () {
+                      ref.read(soundServiceProvider).vibrate();
+                      _openOnlinePaymentModal();
+                    }
+                  : _goNext,
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 foregroundColor: AppColors.white,
@@ -3087,94 +3362,23 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          _currentStep == 4 ? l10n.translate('pay_now') : l10n.translate('continue_btn'),
+                          _currentStep == 4
+                              ? l10n.translate('pay_now')
+                              : l10n.translate('continue_btn'),
                           style: AppTypography.buttonMedium,
                         ),
                         const SizedBox(width: AppSpacing.xs),
-                        const Icon(Icons.arrow_forward, size: 16, color: AppColors.white),
+                        const Icon(
+                          Icons.arrow_forward,
+                          size: 16,
+                          color: AppColors.white,
+                        ),
                       ],
                     ),
             ),
           ),
         ],
       ),
-    );
-  }
-
-  // ── Footer info ──
-
-  Widget _buildFooterInfo() {
-    final l10n = AppLocalizations.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 0,
-        vertical: AppSpacing.sm,
-      ),
-      child: Column(
-        children: [
-          _buildContactItem(l10n),
-          const SizedBox(height: 6),
-          _buildFooterItem(
-            Icons.phone_android,
-            l10n.translate('pay_methods'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Contact row with the phone number emphasized (bold, blue, larger).
-  Widget _buildContactItem(AppLocalizations l10n) {
-    final text = l10n.translate('contact_us');
-    const number = '0782005076';
-    final parts = text.split(number);
-    return Row(
-      children: [
-        const Icon(Icons.phone_rounded, size: 16, color: AppColors.primary),
-        const SizedBox(width: 8),
-        Expanded(
-          child: RichText(
-            text: TextSpan(
-              style: AppTypography.bodySmall.copyWith(
-                color: AppColors.textSub,
-                fontSize: 13,
-              ),
-              children: parts.length == 2
-                  ? [
-                      TextSpan(text: parts[0]),
-                      TextSpan(
-                        text: number,
-                        style: AppTypography.bodyMedium.copyWith(
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15,
-                        ),
-                      ),
-                      TextSpan(text: parts[1]),
-                    ]
-                  : [TextSpan(text: text)],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildFooterItem(IconData icon, String text) {
-    return Row(
-      children: [
-        Icon(icon, size: 16, color: AppColors.primary),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            text,
-            style: AppTypography.bodySmall.copyWith(
-              color: AppColors.textSub,
-              fontSize: 13,
-            ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -3219,95 +3423,98 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           statusBarBrightness: Brightness.light,
         ),
         child: SafeArea(
-        child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.xl),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                ScaleTransition(
-                  scale: CurvedAnimation(
-                    parent: _confirmAnimController,
-                    curve: Curves.elasticOut,
-                  ),
-                  child: Container(
-                    width: 80,
-                    height: 80,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF16A34A),
-                      shape: BoxShape.circle,
+          child: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.xl),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ScaleTransition(
+                    scale: CurvedAnimation(
+                      parent: _confirmAnimController,
+                      curve: Curves.elasticOut,
                     ),
-                    child: const Icon(
-                      Icons.check,
-                      color: AppColors.white,
-                      size: 40,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.xl),
-                Text(
-                  l10n.translate('booking_confirmed'),
-                  style: AppTypography.headlineLarge.copyWith(
-                    color: const Color(0xFF16A34A),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                Text(
-                  l10n.translate('redirecting'),
-                  style: AppTypography.bodyMedium.copyWith(
-                    color: AppColors.textSub,
-                  ),
-                ),
-                if (_confirmedReferenceCode != null) ...[
-                  const SizedBox(height: AppSpacing.lg),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.lg,
-                      vertical: AppSpacing.sm,
-                    ),
-                    decoration: BoxDecoration(
-                      color: AppColors.surface,
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                      border: Border.all(color: AppColors.border),
-                    ),
-                    child: Text(
-                      'Ref: $_confirmedReferenceCode',
-                      style: AppTypography.titleSmall.copyWith(
-                        color: AppColors.primary,
-                        letterSpacing: 1,
+                    child: Container(
+                      width: 80,
+                      height: 80,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF16A34A),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.check,
+                        color: AppColors.white,
+                        size: 40,
                       ),
                     ),
                   ),
-                ],
-                if (_confirmedTicketImage != null &&
-                    _confirmedTicketImage!.isNotEmpty) ...[
                   const SizedBox(height: AppSpacing.xl),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-                    child: CachedNetworkImage(
-                      imageUrl: _confirmedTicketImage!,
-                      height: 300,
-                      width: double.infinity,
-                      fit: BoxFit.fitWidth,
-                      memCacheWidth: (MediaQuery.of(context).size.width *
-                              MediaQuery.of(context).devicePixelRatio)
-                          .round(),
-                      placeholder: (_, __) => const SizedBox(
-                        width: 24,
-                        height: 24,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                      errorWidget: (_, __, ___) => const Icon(
-                        Icons.receipt_long,
-                        size: 64,
-                        color: AppColors.textMuted,
-                      ),
+                  Text(
+                    l10n.translate('booking_confirmed'),
+                    style: AppTypography.headlineLarge.copyWith(
+                      color: const Color(0xFF16A34A),
                     ),
                   ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    l10n.translate('redirecting'),
+                    style: AppTypography.bodyMedium.copyWith(
+                      color: AppColors.textSub,
+                    ),
+                  ),
+                  if (_confirmedReferenceCode != null) ...[
+                    const SizedBox(height: AppSpacing.lg),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.lg,
+                        vertical: AppSpacing.sm,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(
+                          AppSpacing.radiusMd,
+                        ),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Text(
+                        'Ref: $_confirmedReferenceCode',
+                        style: AppTypography.titleSmall.copyWith(
+                          color: AppColors.primary,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (_confirmedTicketImage != null &&
+                      _confirmedTicketImage!.isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.xl),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+                      child: CachedNetworkImage(
+                        imageUrl: _confirmedTicketImage!,
+                        height: 300,
+                        width: double.infinity,
+                        fit: BoxFit.fitWidth,
+                        memCacheWidth:
+                            (MediaQuery.of(context).size.width *
+                                    MediaQuery.of(context).devicePixelRatio)
+                                .round(),
+                        placeholder: (_, __) => const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        errorWidget: (_, __, ___) => const Icon(
+                          Icons.receipt_long,
+                          size: 64,
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
-              ],
+              ),
             ),
-          ),
           ),
         ),
       ),
@@ -3321,8 +3528,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // payment failed (mostly due to insufficient funds) and shown how to retry.
   Widget _buildPaymentFailedView() {
     final l10n = AppLocalizations.of(context);
-    final reason = (_paymentFailureReason != null &&
-            _paymentFailureReason!.isNotEmpty)
+    final reason =
+        (_paymentFailureReason != null && _paymentFailureReason!.isNotEmpty)
         ? _paymentFailureReason!
         : l10n.translate('payment_failed_message');
 
@@ -3394,7 +3601,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                         foregroundColor: AppColors.primary,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                          borderRadius: BorderRadius.circular(
+                            AppSpacing.radiusSm,
+                          ),
                         ),
                         elevation: 0,
                       ),
@@ -3423,7 +3632,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                         ),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+                          borderRadius: BorderRadius.circular(
+                            AppSpacing.radiusSm,
+                          ),
                         ),
                       ),
                       child: Text(
@@ -3454,8 +3665,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final effectivePrice =
         _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
     final fareTotal = effectivePrice * _seatCount;
-    final serviceFee =
-        systemFeeFor(_selectedRoute?.type, effectivePrice, _seatCount).round();
+    final serviceFee = systemFeeFor(
+      _selectedRoute?.type,
+      effectivePrice,
+      _seatCount,
+    ).round();
     final totalAmount = fareTotal + serviceFee;
 
     return Scaffold(
@@ -3474,102 +3688,108 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               ),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 380),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // Lottie payment animation
-                  Lottie.asset(
-                    'assets/lottie/payment.json',
-                    width: 190,
-                    height: 190,
-                    fit: BoxFit.contain,
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-
-                  Text(
-                    l10n.translate('payment_prompt_sent'),
-                    style: AppTypography.titleLarge.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.text,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Lottie payment animation
+                    Lottie.asset(
+                      'assets/lottie/payment.json',
+                      width: 190,
+                      height: 190,
+                      fit: BoxFit.contain,
                     ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.xs + 2),
+                    const SizedBox(height: AppSpacing.sm),
 
-                  Text(
-                    l10n.translate('payment_prompt_desc'),
-                    style: AppTypography.bodyMedium.copyWith(
-                      color: AppColors.textSub,
-                      height: 1.5,
+                    Text(
+                      l10n.translate('payment_prompt_sent'),
+                      style: AppTypography.titleLarge.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.text,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.lg),
+                    const SizedBox(height: AppSpacing.xs + 2),
 
-                  Text(
-                    '${l10n.translate('ref_code')}: ${_paymentWaitingReference ?? '-'}',
-                    style: AppTypography.bodySmall.copyWith(
-                      color: AppColors.textMuted,
-                      fontFamily: 'monospace',
+                    Text(
+                      l10n.translate('payment_prompt_desc'),
+                      style: AppTypography.bodyMedium.copyWith(
+                        color: AppColors.textSub,
+                        height: 1.5,
+                      ),
+                      textAlign: TextAlign.center,
                     ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.xs),
-
-                  Text(
-                    '${l10n.translate('amount')}: ${_formatAmount(totalAmount)} RWF',
-                    style: AppTypography.bodySmall.copyWith(
-                      color: AppColors.textMuted,
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: AppSpacing.xl),
-
-                  if (_paymentError != null) ...[
-                    _buildErrorBanner(_paymentError!),
                     const SizedBox(height: AppSpacing.lg),
-                  ],
 
-                  // Green "Cancel payment" CTA
-                  SizedBox(
-                    width: double.infinity,
-                    height: 40,
-                    child: ElevatedButton.icon(
-                      onPressed: _cancellingWaiting ? null : _cancelFromPaymentWaiting,
-                      icon: _cancellingWaiting
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: AppColors.white,
-                              ),
-                            )
-                          : const Icon(Icons.close, size: 16),
-                      label: Text(
-                        _cancellingWaiting ? l10n.translate('payment_cancelling') : l10n.translate('payment_cancel'),
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.white,
-                        ),
+                    Text(
+                      '${l10n.translate('ref_code')}: ${_paymentWaitingReference ?? '-'}',
+                      style: AppTypography.bodySmall.copyWith(
+                        color: AppColors.textMuted,
+                        fontFamily: 'monospace',
                       ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: AppColors.white,
-                        disabledBackgroundColor: AppColors.primary,
-                        disabledForegroundColor: AppColors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+
+                    Text(
+                      '${l10n.translate('amount')}: ${_formatAmount(totalAmount)} RWF',
+                      style: AppTypography.bodySmall.copyWith(
+                        color: AppColors.textMuted,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: AppSpacing.xl),
+
+                    if (_paymentError != null) ...[
+                      _buildErrorBanner(_paymentError!),
+                      const SizedBox(height: AppSpacing.lg),
+                    ],
+
+                    // Green "Cancel payment" CTA
+                    SizedBox(
+                      width: double.infinity,
+                      height: 40,
+                      child: ElevatedButton.icon(
+                        onPressed: _cancellingWaiting
+                            ? null
+                            : _cancelFromPaymentWaiting,
+                        icon: _cancellingWaiting
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: AppColors.white,
+                                ),
+                              )
+                            : const Icon(Icons.close, size: 16),
+                        label: Text(
+                          _cancellingWaiting
+                              ? l10n.translate('payment_cancelling')
+                              : l10n.translate('payment_cancel'),
+                          style: const TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.white,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: AppColors.white,
+                          disabledBackgroundColor: AppColors.primary,
+                          disabledForegroundColor: AppColors.white,
+                          elevation: 0,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(
+                              AppSpacing.radiusMd,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
           ),
         ),
       ),
@@ -3613,7 +3833,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   Widget _buildLabel(String text, {TextStyle? style}) {
     return Text(
       text,
-      style: style ??
+      style:
+          style ??
           AppTypography.labelLarge.copyWith(
             color: AppColors.textSub,
             fontWeight: FontWeight.w700,
@@ -3646,8 +3867,19 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   String _monthName(int month) {
     const keys = [
-      '', 'month_jan', 'month_feb', 'month_mar', 'month_apr', 'month_may', 'month_jun',
-      'month_jul', 'month_aug', 'month_sep', 'month_oct', 'month_nov', 'month_dec',
+      '',
+      'month_jan',
+      'month_feb',
+      'month_mar',
+      'month_apr',
+      'month_may',
+      'month_jun',
+      'month_jul',
+      'month_aug',
+      'month_sep',
+      'month_oct',
+      'month_nov',
+      'month_dec',
     ];
     final l10n = AppLocalizations.of(context);
     return l10n.translate(keys[month]);
