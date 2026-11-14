@@ -109,9 +109,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
               child: Form(
                 key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
+                child: Theme(
+                  data: Theme.of(context).copyWith(
+                    inputDecorationTheme: _loginInputTheme(),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
                     Align(
                       alignment: Alignment.centerLeft,
                       child: IconButton(
@@ -153,7 +157,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     const SizedBox(height: AppSpacing.lg),
                     Text(
                       l10n.translate('welcome_to_katisha'),
-                      style: AppTypography.displaySmall,
+                      style: AppTypography.displayMedium,
                     ),
                     const SizedBox(height: AppSpacing.xs),
                     Text(
@@ -164,8 +168,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                     const SizedBox(height: AppSpacing.xl),
 
-                    _label('Phone number or username'),
-                    const SizedBox(height: AppSpacing.xs),
                     TextFormField(
                       controller: _identifierController,
                       keyboardType: TextInputType.text,
@@ -177,6 +179,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       autocorrect: false,
                       onFieldSubmitted: (_) => _passwordFocus.requestFocus(),
                       decoration: const InputDecoration(
+                        labelText: 'Phone number or username',
                         hintText: 'e.g. 0788 000 000',
                         prefixIcon: Icon(
                           Icons.person_outline_rounded,
@@ -192,8 +195,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     ),
                     const SizedBox(height: AppSpacing.md),
 
-                    _label('Password'),
-                    const SizedBox(height: AppSpacing.xs),
                     TextFormField(
                       controller: _passwordController,
                       focusNode: _passwordFocus,
@@ -202,6 +203,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       autofillHints: const [AutofillHints.password],
                       onFieldSubmitted: (_) => _submit(),
                       decoration: InputDecoration(
+                        labelText: l10n.translate('password'),
                         hintText: l10n.translate('password_hint'),
                         prefixIcon: const Icon(
                           Icons.lock_outline_rounded,
@@ -272,7 +274,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       ),
                       child: const Text('Continue as a guest'),
                     ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -282,13 +285,35 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     );
   }
 
-  Widget _label(String text) {
-    return Text(
-      text.toUpperCase(),
-      style: AppTypography.labelSmall.copyWith(
-        color: AppColors.textSub,
-        letterSpacing: 0.6,
+  /// Login fields use a dark gray outline with no background fill, overriding
+  /// the app-wide filled/surface input style.
+  InputDecorationTheme _loginInputTheme() {
+    return InputDecorationTheme(
+      filled: false,
+      fillColor: Colors.transparent,
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.md,
       ),
+      labelStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
+      floatingLabelStyle: AppTypography.bodyMedium.copyWith(
+        color: AppColors.primary,
+        fontWeight: FontWeight.w600,
+      ),
+      hintStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
+      errorStyle: AppTypography.bodySmall.copyWith(color: AppColors.error),
+      border: _loginBorder(AppColors.textMuted),
+      enabledBorder: _loginBorder(AppColors.textMuted),
+      focusedBorder: _loginBorder(AppColors.primary, width: 1.5),
+      errorBorder: _loginBorder(AppColors.error),
+      focusedErrorBorder: _loginBorder(AppColors.error, width: 1.5),
+    );
+  }
+
+  OutlineInputBorder _loginBorder(Color color, {double width = 1.0}) {
+    return OutlineInputBorder(
+      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+      borderSide: BorderSide(color: color, width: width),
     );
   }
 

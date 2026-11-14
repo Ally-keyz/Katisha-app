@@ -10,9 +10,9 @@ abstract final class AppSpacing {
   static const double xxxx = 96;
 
   // ── Border Radius ────────────────────────────
-  static const double radiusSm = 4;
-  static const double radiusMd = 8;
-  static const double radiusLg = 12;
-  static const double radiusXl = 16;
+  static const double radiusSm = 6;
+  static const double radiusMd = 12;
+  static const double radiusLg = 16;
+  static const double radiusXl = 20;
   static const double radiusFull = 9999;
 }
