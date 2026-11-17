@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Xcode raises this to "production" when the app is signed with an
+	     App Store / Ad Hoc provisioning profile that includes push. -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>

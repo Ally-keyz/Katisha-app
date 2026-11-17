@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,7 @@ import 'core/network/api_client.dart';
 import 'core/network/socket_service.dart';
 import 'core/platform/badge_counts.dart';
 import 'core/platform/notification_service.dart';
+import 'core/platform/notification_service_impl.dart';
 import 'core/platform/platform_providers.dart';
 import 'core/platform/ticket_sync_service.dart';
 import 'core/routing/app_router.dart';
@@ -19,6 +21,10 @@ import 'l10n/app_localizations.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Must be registered before runApp so a message that arrives while the app
+  // is terminated still reaches the background handler.
+  registerFirebaseBackgroundHandler();
 
   // Cap the decoded-image cache so ticket PNGs and UI images can't balloon
   // memory. Every screen decodes at its render size (see the `cacheWidth` /
@@ -68,12 +74,15 @@ class _KatishaAppState extends ConsumerState<KatishaApp> {
   StreamSubscription<NotificationPayload>? _notificationTapSub;
   StreamSubscription<SocketEvent>? _socketEventSub;
   StreamSubscription<SessionUser?>? _sessionSub;
+  StreamSubscription<String>? _tokenRefreshSub;
+  String? _registeredDeviceToken;
   SessionUser? _session;
 
   @override
   void initState() {
     super.initState();
     _setupNotificationTapListener();
+    _setupDeviceTokenSync();
     _setupSessionAndSocket();
   }
 
@@ -85,6 +94,45 @@ class _KatishaAppState extends ConsumerState<KatishaApp> {
       final router = ref.read(appRouterProvider);
       _handleNotificationNavigation(router, payload);
     });
+  }
+
+  /// Keeps the backend's copy of this device's FCM token current.
+  void _setupDeviceTokenSync() {
+    _tokenRefreshSub =
+        ref.read(notificationServiceProvider).onDeviceTokenRefresh.listen(
+      (token) {
+        unawaited(_registerDeviceToken(tokenOverride: token));
+      },
+    );
+  }
+
+  /// Sends the FCM token to the API so the server can push to this device.
+  /// Safe to call repeatedly: the last token is remembered and re-registration
+  /// is skipped unless Firebase rotated it.
+  Future<void> _registerDeviceToken({String? tokenOverride}) async {
+    if (_session == null) return;
+
+    try {
+      final service = ref.read(notificationServiceProvider);
+      final token = tokenOverride ?? await service.getDeviceToken();
+      if (token == null || token.isEmpty) return;
+      if (token == _registeredDeviceToken) return;
+
+      await ref.read(apiClientProvider).post(
+        '/auth/device-token',
+        data: {
+          'token': token,
+          'platform': Platform.isIOS ? 'ios' : 'android',
+        },
+      );
+      _registeredDeviceToken = token;
+      await ref
+          .read(sharedPreferencesProvider)
+          .setString(kDeviceTokenPrefsKey, token);
+    } catch (error) {
+      // A failed registration must never interrupt the session.
+      debugPrint('[Push] Device token registration failed: $error');
+    }
   }
 
   /// Connects the real-time socket whenever a session exists and tears it down
@@ -103,6 +151,7 @@ class _KatishaAppState extends ConsumerState<KatishaApp> {
     if (user == null) {
       _socketEventSub?.cancel();
       _socketEventSub = null;
+      _registeredDeviceToken = null;
       ref.read(socketServiceProvider).disconnect();
       return;
     }
@@ -119,6 +168,9 @@ class _KatishaAppState extends ConsumerState<KatishaApp> {
     if (!socket.isConnected) {
       unawaited(socket.connect(token));
     }
+
+    // Register this device for background push now that we have a session.
+    unawaited(_registerDeviceToken());
   }
 
   void _handleSocketEvent(SocketEvent event) {
@@ -247,9 +299,11 @@ class _KatishaAppState extends ConsumerState<KatishaApp> {
     _notificationTapSub?.cancel();
     _socketEventSub?.cancel();
     _sessionSub?.cancel();
+    _tokenRefreshSub?.cancel();
     _notificationTapSub = null;
     _socketEventSub = null;
     _sessionSub = null;
+    _tokenRefreshSub = null;
     super.dispose();
   }
 

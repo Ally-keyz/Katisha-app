@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../network/api_client.dart';
+import '../platform/notification_service.dart';
 import '../platform/platform_providers.dart';
 
 /// The signed-in account, reduced to the fields the app needs for routing and
@@ -145,6 +146,21 @@ class SessionController extends StateNotifier<SessionUser?> {
   }
 
   Future<void> logout() async {
+    // Unregister this device while the access token is still valid, otherwise
+    // the phone would keep receiving the previous account's push notifications.
+    final deviceToken = _prefs.getString(kDeviceTokenPrefsKey);
+    if (deviceToken != null && deviceToken.isNotEmpty) {
+      try {
+        await _api.delete(
+          '/auth/device-token',
+          data: {'token': deviceToken},
+        );
+      } catch (_) {
+        // Server-side pruning cleans up undeliverable tokens later.
+      }
+      await _prefs.remove(kDeviceTokenPrefsKey);
+    }
+
     await _api.clearTokens();
     await _prefs.remove(_storageKey);
     state = null;

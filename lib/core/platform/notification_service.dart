@@ -1,5 +1,10 @@
 import 'dart:async';
 
+/// Shared-preferences key holding the last FCM token registered with the
+/// backend. Logout reads it to unregister the device before auth tokens are
+/// cleared, so a signed-out phone stops receiving that account's pushes.
+const String kDeviceTokenPrefsKey = 'katisha_device_token_v1';
+
 /// Data class representing a push notification payload.
 class NotificationPayload {
   final String title;
@@ -38,6 +43,10 @@ abstract class NotificationService {
 
   /// Returns the FCM device token for registration with the backend.
   Future<String?> getDeviceToken();
+
+  /// Emits a fresh FCM token whenever Firebase rotates it. The backend must be
+  /// updated or the device silently stops receiving push notifications.
+  Stream<String> get onDeviceTokenRefresh;
 
   /// Requests notification permission from the user.
   /// Returns true if permission was granted.

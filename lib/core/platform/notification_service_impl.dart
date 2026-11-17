@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:timezone/timezone.dart' as tz;
@@ -29,10 +31,44 @@ class NotificationServiceImpl implements NotificationService {
   final FlutterLocalNotificationsPlugin _plugin;
   final SharedPreferences _prefs;
 
+  /// Local-notification action handlers run in a background isolate; wiring
+  /// FCM there would create a second set of listeners for no benefit.
+  final bool _firebaseEnabled;
+
   final _notificationTappedController =
       StreamController<NotificationPayload>.broadcast();
   final _foregroundAlertController =
       StreamController<NotificationPayload>.broadcast();
+  final _deviceTokenRefreshController = StreamController<String>.broadcast();
+
+  FirebaseMessaging? _messaging;
+  bool _firebaseReady = false;
+  StreamSubscription<RemoteMessage>? _fcmMessageSub;
+  StreamSubscription<RemoteMessage>? _fcmOpenedSub;
+  StreamSubscription<String>? _fcmTokenSub;
+  NotificationPayload? _pendingInitialTap;
+  bool _initialTapScheduled = false;
+
+  /// The API emits both a Socket.IO event and an FCM push for the same
+  /// notification. While the app is in the foreground both arrive; this short
+  /// memory prevents the user seeing the same alert twice.
+  static const Duration _dedupeWindow = Duration(seconds: 20);
+  final Map<String, DateTime> _recentAlerts = {};
+
+  /// Returns true when an alert for this type/entity was already shown within
+  /// [_dedupeWindow]. Records the alert otherwise.
+  bool _isDuplicate(String type, String? entityId, {String? title}) {
+    final identity = (entityId != null && entityId.isNotEmpty)
+        ? entityId
+        : (title ?? '');
+    final key = '$type|$identity';
+    final now = DateTime.now();
+    _recentAlerts.removeWhere((_, at) => now.difference(at) > _dedupeWindow);
+    final last = _recentAlerts[key];
+    if (last != null && now.difference(last) < _dedupeWindow) return true;
+    _recentAlerts[key] = now;
+    return false;
+  }
 
   late final AndroidNotificationDetails _journeyAndroidDetails;
   late final AndroidNotificationDetails _bookingAndroidDetails;
@@ -44,8 +80,10 @@ class NotificationServiceImpl implements NotificationService {
   NotificationServiceImpl({
     required FlutterLocalNotificationsPlugin plugin,
     required SharedPreferences prefs,
+    bool firebaseEnabled = true,
   })  : _plugin = plugin,
-        _prefs = prefs {
+        _prefs = prefs,
+        _firebaseEnabled = firebaseEnabled {
     _journeyAndroidDetails = AndroidNotificationDetails(
       _kJourneyChannelId,
       'Departure Alerts',
@@ -205,6 +243,121 @@ class NotificationServiceImpl implements NotificationService {
         ),
       );
     }
+
+    // FCM is optional: without google-services.json (or on a platform where
+    // Firebase is not configured) local notifications keep working and push
+    // simply stays off.
+    if (_firebaseEnabled) {
+      await _initFirebaseMessaging();
+    }
+  }
+
+  /// Wires Firebase Cloud Messaging so the app is woken for alerts even when it
+  /// is backgrounded or closed.
+  Future<void> _initFirebaseMessaging() async {
+    try {
+      if (Firebase.apps.isEmpty) {
+        await Firebase.initializeApp();
+      }
+
+      final messaging = FirebaseMessaging.instance;
+      _messaging = messaging;
+      _firebaseReady = true;
+
+      await messaging.setAutoInitEnabled(true);
+      // Foreground messages are drawn by our own local notification so they
+      // match the in-app alert style. Letting iOS also present them would show
+      // every alert twice.
+      await messaging.setForegroundNotificationPresentationOptions(
+        alert: false,
+        badge: false,
+        sound: false,
+      );
+
+      _fcmMessageSub =
+          FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+      _fcmOpenedSub = FirebaseMessaging.onMessageOpenedApp
+          .listen(_handleMessageOpened);
+      // `getToken` is the registration token the Admin SDK sends to. The new
+      // `register()` API yields a Firebase Installation ID, which firebase-admin
+      // cannot target, so the deprecated token APIs remain the correct choice.
+      // ignore: deprecated_member_use
+      _fcmTokenSub = messaging.onTokenRefresh.listen((token) {
+        if (!_deviceTokenRefreshController.isClosed) {
+          _deviceTokenRefreshController.add(token);
+        }
+      });
+
+      // Tapping a notification that launched the app from a terminated state.
+      // The tap stream has no listener yet, so hold it until one attaches.
+      final initial = await messaging.getInitialMessage();
+      if (initial != null) {
+        _pendingInitialTap = _payloadFromMessage(initial);
+        // The app may have finished starting while getInitialMessage ran; the
+        // listener is already attached in that case.
+        if (_notificationTappedController.hasListener) {
+          _emitPendingInitialTap();
+        }
+      }
+    } catch (error) {
+      _firebaseReady = false;
+      _messaging = null;
+      debugPrint('[Notifications] Firebase is unavailable: $error');
+    }
+  }
+
+  void _handleForegroundMessage(RemoteMessage message) {
+    final payload = _payloadFromMessage(message);
+    if (payload.title.isEmpty && payload.body.isEmpty) return;
+    if (!_foregroundAlertController.isClosed) {
+      _foregroundAlertController.add(payload);
+    }
+    unawaited(_showRemoteAlert(payload));
+  }
+
+  Future<void> _showRemoteAlert(NotificationPayload payload) async {
+    if (_isDuplicate(
+      payload.type ?? 'notification',
+      payload.entityId,
+      title: payload.title,
+    )) {
+      return;
+    }
+    try {
+      await _plugin.show(
+        DateTime.now().millisecondsSinceEpoch.remainder(100000),
+        payload.title.isEmpty ? 'Katisha' : payload.title,
+        payload.body,
+        _bookingNotificationDetails,
+        payload: _encodePayload({
+          'title': payload.title,
+          'body': payload.body,
+          'type': payload.type ?? 'notification',
+          'entity_id': payload.entityId ?? '',
+        }),
+      );
+    } catch (error) {
+      debugPrint('[Notifications] Could not show push alert: $error');
+    }
+  }
+
+  void _handleMessageOpened(RemoteMessage message) {
+    if (_notificationTappedController.isClosed) return;
+    _notificationTappedController.add(_payloadFromMessage(message));
+  }
+
+  NotificationPayload _payloadFromMessage(RemoteMessage message) {
+    final data = message.data;
+    final title = (data['title'] ?? message.notification?.title ?? '').toString();
+    final body = (data['body'] ?? message.notification?.body ?? '').toString();
+    final type = (data['type'] ?? 'notification').toString();
+    final rawId = (data['entity_id'] ?? data['bookingId'] ?? '').toString();
+    return NotificationPayload(
+      title: title.isEmpty ? 'Katisha' : title,
+      body: body,
+      type: type,
+      entityId: rawId.isEmpty ? null : rawId,
+    );
   }
 
   @override
@@ -220,8 +373,25 @@ class NotificationServiceImpl implements NotificationService {
 
   @override
   Future<String?> getDeviceToken() async {
-    return null;
+    try {
+      await _ensureInitialized();
+      if (!_firebaseReady) return null;
+      // ignore: deprecated_member_use
+      final token = await _messaging?.getToken();
+      if (token == null || token.isEmpty) return null;
+      // Persist so logout can unregister the exact token even after the auth
+      // session has been cleared from memory.
+      await _prefs.setString(kDeviceTokenPrefsKey, token);
+      return token;
+    } catch (error) {
+      debugPrint('[Notifications] Could not read FCM token: $error');
+      return null;
+    }
   }
+
+  @override
+  Stream<String> get onDeviceTokenRefresh =>
+      _deviceTokenRefreshController.stream;
 
   @override
   Future<bool> requestPermission() async {
@@ -231,6 +401,28 @@ class NotificationServiceImpl implements NotificationService {
       await _ensureInitialized();
     } catch (_) {
       return false;
+    }
+
+    // FCM requests the same OS permission. Using it first keeps the iOS APNs
+    // registration in sync with the prompt (without permission iOS never issues
+    // an APNs token, so FCM would keep returning a null device token).
+    if (_firebaseReady) {
+      try {
+        final settings = await _messaging!.requestPermission(
+          alert: true,
+          badge: true,
+          sound: true,
+          provisional: false,
+        );
+        final status = settings.authorizationStatus;
+        if (status == AuthorizationStatus.authorized ||
+            status == AuthorizationStatus.provisional) {
+          return true;
+        }
+        if (status == AuthorizationStatus.denied) return false;
+      } catch (error) {
+        debugPrint('[Notifications] FCM permission request failed: $error');
+      }
     }
 
     if (Platform.isAndroid) {
@@ -359,6 +551,8 @@ class NotificationServiceImpl implements NotificationService {
     required String type,
     String? entityId,
   }) async {
+    if (_isDuplicate(type, entityId, title: title)) return;
+
     final payload = _encodePayload({
       'title': title,
       'body': body,
@@ -422,16 +616,36 @@ class NotificationServiceImpl implements NotificationService {
   }
 
   @override
-  Stream<NotificationPayload> get onNotificationTapped =>
-      _notificationTappedController.stream;
+  Stream<NotificationPayload> get onNotificationTapped {
+    // A push that launched the app from a terminated state is only known after
+    // Firebase initializes; replay it once a listener attaches.
+    _emitPendingInitialTap();
+    return _notificationTappedController.stream;
+  }
+
+  void _emitPendingInitialTap() {
+    if (_pendingInitialTap == null || _initialTapScheduled) return;
+    _initialTapScheduled = true;
+    scheduleMicrotask(() {
+      final payload = _pendingInitialTap;
+      _pendingInitialTap = null;
+      if (payload != null && !_notificationTappedController.isClosed) {
+        _notificationTappedController.add(payload);
+      }
+    });
+  }
 
   @override
   Stream<NotificationPayload> get onForegroundAlert =>
       _foregroundAlertController.stream;
 
   void dispose() {
+    _fcmMessageSub?.cancel();
+    _fcmOpenedSub?.cancel();
+    _fcmTokenSub?.cancel();
     _notificationTappedController.close();
     _foregroundAlertController.close();
+    _deviceTokenRefreshController.close();
   }
 
   int _getSnoozeCount(String bookingId) {
@@ -474,10 +688,87 @@ void notificationTapBackground(NotificationResponse response) async {
     final service = NotificationServiceImpl(
       plugin: FlutterLocalNotificationsPlugin(),
       prefs: prefs,
+      firebaseEnabled: false,
     );
     await service.initialize(requestPermissions: false);
     await service.handleSnooze(bookingId);
   } catch (_) {
     // The action is best-effort; the scheduled alerts remain in place.
+  }
+}
+
+/// Registers the top-level FCM background handler. Must run in `main()` before
+/// `runApp` so messages received while the app is killed are delivered.
+void registerFirebaseBackgroundHandler() {
+  // FCM background delivery only exists on mobile; desktop/web runs of the app
+  // (developer tooling) must not hit an unsupported-platform exception.
+  if (!Platform.isAndroid && !Platform.isIOS) return;
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+}
+
+/// Handles FCM messages while the app is in the background or terminated.
+///
+/// Messages sent by the API include a `notification` block, which Android and
+/// iOS display themselves. Only data-only messages need to be rendered here
+/// (for example a silent data push that should still surface to the user).
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  try {
+    if (Firebase.apps.isEmpty) {
+      await Firebase.initializeApp();
+    }
+  } catch (_) {
+    // Firebase may not be configured on every platform; the OS still displays
+    // notification-block messages without it.
+  }
+
+  if (message.notification != null) return;
+
+  final data = message.data;
+  final title = (data['title'] ?? 'Katisha').toString();
+  final body = (data['body'] ?? '').toString();
+  if (body.isEmpty) return;
+
+  try {
+    final plugin = FlutterLocalNotificationsPlugin();
+    const init = InitializationSettings(
+      android: AndroidInitializationSettings(_kSmallIcon),
+      iOS: DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      ),
+    );
+    await plugin.initialize(init);
+    await plugin.show(
+      DateTime.now().millisecondsSinceEpoch.remainder(100000),
+      title,
+      body,
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          _kBookingChannelId,
+          'Booking Alerts',
+          channelDescription:
+              'Notifications for new bookings, ticket issuance, and payment confirmations',
+          importance: Importance.max,
+          priority: Priority.max,
+          icon: _kSmallIcon,
+          playSound: true,
+          enableVibration: true,
+        ),
+        iOS: DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
+      ),
+      payload: 'title=${Uri.encodeComponent(title)}'
+          '&body=${Uri.encodeComponent(body)}'
+          '&type=${Uri.encodeComponent(data['type']?.toString() ?? 'notification')}'
+          '&entity_id=${Uri.encodeComponent((data['entity_id'] ?? data['bookingId'] ?? '').toString())}',
+    );
+  } catch (_) {
+    // Best effort: if the local plugin is unavailable in this isolate the push
+    // is still present in the notification list once the app opens.
   }
 }

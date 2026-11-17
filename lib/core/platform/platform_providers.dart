@@ -93,6 +93,8 @@ class _NoOpNotificationService implements NotificationService {
   @override
   Future<String?> getDeviceToken() async => null;
   @override
+  Stream<String> get onDeviceTokenRefresh => const Stream.empty();
+  @override
   Future<bool> requestPermission() async => false;
   @override
   Future<void> scheduleJourneyAlert({
