@@ -57,8 +57,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           );
 
       // Booking and journey alerts need permission up front; asking here keeps
-      // it tied to a deliberate user action.
-      ref.read(notificationServiceProvider).requestPermission();
+      // it tied to a deliberate user action. Awaited so the system prompt is
+      // actually shown before the next screen opens (a fire-and-forget call
+      // could be dropped when the route changed).
+      try {
+        await ref.read(notificationServiceProvider).requestPermission();
+      } catch (_) {
+        // A denied/unavailable permission prompt must never block sign-in.
+      }
 
       if (!mounted) return;
       context.go(user.isAgent ? '/agent' : '/home');
@@ -148,7 +154,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                       height: 44,
                       cacheWidth: 132,
                       fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) => const Icon(
+                      errorBuilder: (_, _, _) => const Icon(
                         Icons.directions_bus,
                         size: 44,
                         color: AppColors.primary,

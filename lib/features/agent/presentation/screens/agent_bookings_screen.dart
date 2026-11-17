@@ -12,9 +12,11 @@ import '../../../../core/auth/session.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/media_url.dart';
 import '../../../../core/network/socket_service.dart';
+import '../../../../core/platform/platform_providers.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
+import '../../../../core/widgets/katisha_app_bar.dart';
 import '../../../../shared/models/booking_model.dart';
 import '../../data/agent_repository.dart';
 
@@ -23,9 +25,15 @@ final _agentRepoProvider = Provider<AgentRepository>((ref) {
 });
 
 final _dateFormat = DateFormat('EEE, d MMM yyyy');
+final _amountFormat = NumberFormat.decimalPattern();
 
 /// Field-agent portal: assigned-route bookings, the "I have seen it" step, and
 /// the mandatory photo of the physical ticket that makes a booking ready.
+///
+/// The screen deliberately mirrors the passenger side of the app: the same
+/// [KatishaAppBar], typography, spacing and card vocabulary as the
+/// notifications list. Cards stay collapsed to a single summary row and expand
+/// in place when tapped, so the list reads calmly even with many bookings.
 class AgentBookingsScreen extends ConsumerStatefulWidget {
   const AgentBookingsScreen({super.key});
 
@@ -37,10 +45,12 @@ class AgentBookingsScreen extends ConsumerStatefulWidget {
 class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
   final _picker = ImagePicker();
   final Set<String> _busy = <String>{};
+  final Set<String> _expanded = <String>{};
 
   List<Booking> _bookings = <Booking>[];
   bool _loading = true;
   bool _todayOnly = false;
+  bool _attentionOnly = false;
   String? _error;
   Timer? _reloadDebounce;
   StreamSubscription<SocketEvent>? _socketSub;
@@ -55,11 +65,35 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     return {'Authorization': 'Bearer $token'};
   }
 
+  bool _hasProof(Booking booking) =>
+      booking.ticketProofImage != null && booking.ticketProofImage!.isNotEmpty;
+
+  /// A booking needs the agent to act when it is paid but the physical ticket
+  /// proof has not been captured yet. Unpaid bookings are waiting on the
+  /// passenger and cancelled/rejected rows never reach this list.
+  bool _needsAttention(Booking booking) =>
+      booking.paymentStatus == 'paid' && !_hasProof(booking);
+
+  int get _attentionCount => _bookings.where(_needsAttention).length;
+
+  List<Booking> get _visibleBookings => _attentionOnly
+      ? _bookings.where(_needsAttention).toList(growable: false)
+      : _bookings;
+
   @override
   void initState() {
     super.initState();
     _load();
     _listenForUpdates();
+
+    // Safety net for accounts that signed in before permission was granted:
+    // without POST_NOTIFICATIONS (Android 13+) every alert is silently dropped.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(
+        ref.read(notificationServiceProvider).requestPermission(),
+      );
+    });
   }
 
   @override
@@ -140,6 +174,11 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
   }
 
   int _compareBookings(Booking a, Booking b) {
+    // Anything waiting on the agent floats to the top of the list.
+    final aAttention = _needsAttention(a) ? 0 : 1;
+    final bAttention = _needsAttention(b) ? 0 : 1;
+    if (aAttention != bAttention) return aAttention.compareTo(bAttention);
+
     final da = a.travelDate ?? DateTime(2100);
     final db = b.travelDate ?? DateTime(2100);
     final byDate = da.compareTo(db);
@@ -155,7 +194,10 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     setState(() => _busy.remove(booking.id));
     result.fold(
       (failure) => _showSnack(failure.message, isError: true),
-      (updated) => _replaceBooking(updated),
+      (updated) {
+        _replaceBooking(updated);
+        _showSnack('Booking confirmed. Capture the ticket photo next.');
+      },
     );
   }
 
@@ -167,8 +209,8 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
       shot = await _picker.pickImage(
         source: ImageSource.camera,
         preferredCameraDevice: CameraDevice.rear,
-        imageQuality: 72,
-        maxWidth: 1800,
+        imageQuality: 70,
+        maxWidth: 1600,
       );
     } catch (_) {
       if (mounted) {
@@ -191,8 +233,8 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
           final retake = await _picker.pickImage(
             source: ImageSource.camera,
             preferredCameraDevice: CameraDevice.rear,
-            imageQuality: 72,
-            maxWidth: 1800,
+            imageQuality: 70,
+            maxWidth: 1600,
           );
           if (retake == null) return;
           photo = File(retake.path);
@@ -230,11 +272,11 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
       builder: (ctx) {
         final width = MediaQuery.of(ctx).size.width;
         return AlertDialog(
-          backgroundColor: Colors.white,
+          backgroundColor: AppColors.white,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
           ),
-          title: const Text('Ticket photo'),
+          title: Text('Ticket photo', style: AppTypography.titleMedium),
           content: SizedBox(
             width: 360,
             child: Column(
@@ -242,7 +284,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                   child: Image.file(
                     photo,
                     height: 240,
@@ -266,14 +308,16 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, 'retake'),
-              child: const Text('Retake'),
+              child: Text(
+                'Retake',
+                style: AppTypography.labelLarge.copyWith(
+                  color: AppColors.textSub,
+                ),
+              ),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(ctx, 'use'),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
+              style: _primaryButtonStyle(),
               child: const Text('Use photo'),
             ),
           ],
@@ -294,7 +338,10 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
       _load(silent: true);
       return;
     }
-    setState(() => _bookings[index] = updated);
+    setState(() {
+      _bookings[index] = updated;
+      _bookings.sort(_compareBookings);
+    });
   }
 
   void _showSnack(String message, {bool isError = false}) {
@@ -306,6 +353,9 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
           content: Text(message),
           backgroundColor: isError ? AppColors.error : AppColors.text,
           behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+          ),
         ),
       );
   }
@@ -314,20 +364,34 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Log out?'),
-        content: const Text(
+        backgroundColor: AppColors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
+        ),
+        title: Text('Log out?', style: AppTypography.titleMedium),
+        content: Text(
           'You will need to sign in again to see your assigned bookings.',
+          style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+            child: Text(
+              'Cancel',
+              style: AppTypography.labelLarge.copyWith(
+                color: AppColors.textSub,
+              ),
+            ),
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(
               backgroundColor: AppColors.error,
-              foregroundColor: Colors.white,
+              foregroundColor: AppColors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+              textStyle: AppTypography.buttonMedium,
             ),
             child: const Text('Log out'),
           ),
@@ -342,68 +406,171 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final session = ref.watch(sessionProvider);
-
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        elevation: 0,
-        automaticallyImplyLeading: false,
-        titleSpacing: AppSpacing.md,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Agent Portal', style: AppTypography.titleLarge),
-            if (session != null)
-              Text(
-                session.name.isNotEmpty ? session.name : session.username,
-                style: AppTypography.bodySmall.copyWith(
-                  color: AppColors.textSub,
-                ),
-              ),
-          ],
-        ),
-        actions: [
+      backgroundColor: AppColors.white,
+      appBar: KatishaAppBar(
+        title: 'Agent Portal',
+        showBell: false,
+        extraActions: [
+          _buildAttentionAction(),
           IconButton(
             tooltip: 'Refresh',
             onPressed: () => _load(),
-            icon: const Icon(Icons.refresh_rounded, color: AppColors.textSub),
+            icon: const Icon(
+              Icons.refresh_rounded,
+              color: AppColors.textSub,
+            ),
           ),
-          IconButton(
-            tooltip: 'Log out',
-            onPressed: _logout,
-            icon: const Icon(Icons.logout_rounded, color: AppColors.textSub),
+          PopupMenuButton<String>(
+            tooltip: 'More',
+            icon: const Icon(Icons.more_vert_rounded, color: AppColors.textSub),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+            ),
+            onSelected: (value) {
+              if (value == 'logout') _logout();
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.logout_rounded,
+                      size: 18,
+                      color: AppColors.error,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Text(
+                      'Log out',
+                      style: AppTypography.labelLarge.copyWith(
+                        color: AppColors.error,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
           const SizedBox(width: 4),
         ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(52),
-          child: Container(
-            color: Colors.white,
-            padding: const EdgeInsets.fromLTRB(
-              AppSpacing.md,
-              0,
-              AppSpacing.md,
-              AppSpacing.sm,
+      ),
+      body: _buildBody(),
+    );
+  }
+
+  // ── App bar attention flag ────────────────────────────────────────────────
+
+  Widget _buildAttentionAction() {
+    final count = _attentionCount;
+    final active = _attentionOnly;
+
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        IconButton(
+          tooltip: count > 0
+              ? '$count booking${count == 1 ? '' : 's'} need attention'
+              : 'Nothing needs attention',
+          onPressed: count == 0 && !active
+              ? null
+              : () {
+                  setState(() => _attentionOnly = !_attentionOnly);
+                },
+          icon: Icon(
+            active ? Icons.flag_rounded : Icons.flag_outlined,
+            color: count > 0
+                ? AppColors.error
+                : active
+                    ? AppColors.primary
+                    : AppColors.textMuted,
+          ),
+        ),
+        if (count > 0)
+          Positioned(
+            right: 4,
+            top: 4,
+            child: IgnorePointer(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
+                decoration: const BoxDecoration(
+                  color: AppColors.error,
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  count > 99 ? '99+' : '$count',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w700,
+                    height: 1,
+                  ),
+                ),
+              ),
             ),
-            child: Row(
-              children: [
-                _filterChip('All bookings', !_todayOnly, () {
-                  setState(() => _todayOnly = false);
-                  _load();
-                }),
-                const SizedBox(width: AppSpacing.sm),
-                _filterChip("Today's trips", _todayOnly, () {
-                  setState(() => _todayOnly = true);
-                  _load();
-                }),
-              ],
+          ),
+      ],
+    );
+  }
+
+  // ── Body ──────────────────────────────────────────────────────────────────
+
+  Widget _buildBody() {
+    if (_loading && _bookings.isEmpty) {
+      return _buildSkeleton();
+    }
+
+    if (_error != null && _bookings.isEmpty) {
+      return _buildErrorState();
+    }
+
+    final bookings = _visibleBookings;
+
+    return Column(
+      children: [
+        _buildFilters(),
+        if (_attentionOnly && _attentionCount > 0) _buildAttentionBanner(),
+        Expanded(
+          child: RefreshIndicator(
+            color: AppColors.primary,
+            onRefresh: () => _load(silent: true),
+            child: ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+              itemCount: bookings.isEmpty ? 1 : bookings.length,
+              itemBuilder: (context, index) {
+                if (bookings.isEmpty) return _buildEmptyState();
+                return _buildBookingCard(bookings[index]);
+              },
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildFilters() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+      child: Row(
+        children: [
+          _filterChip('All bookings', !_todayOnly, () {
+            if (_todayOnly) {
+              setState(() => _todayOnly = false);
+              _load();
+            }
+          }),
+          const SizedBox(width: AppSpacing.sm),
+          _filterChip("Today's trips", _todayOnly, () {
+            if (!_todayOnly) {
+              setState(() => _todayOnly = true);
+              _load();
+            }
+          }),
+        ],
       ),
-      body: _buildBody(),
     );
   }
 
@@ -411,13 +578,10 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: 7,
-        ),
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
-          color: selected ? AppColors.primary : AppColors.surface,
+          color: selected ? AppColors.primary : AppColors.white,
           borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
           border: Border.all(
             color: selected ? AppColors.primary : AppColors.border,
@@ -426,7 +590,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
         child: Text(
           label,
           style: AppTypography.labelMedium.copyWith(
-            color: selected ? Colors.white : AppColors.textSub,
+            color: selected ? AppColors.white : AppColors.textSub,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -434,94 +598,37 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     );
   }
 
-  Widget _buildBody() {
-    if (_loading && _bookings.isEmpty) {
-      return const Center(
-        child: CircularProgressIndicator(
-          strokeWidth: 2.5,
-          color: AppColors.primary,
-        ),
-      );
-    }
-
-    if (_error != null && _bookings.isEmpty) {
-      return _buildErrorState();
-    }
-
-    return RefreshIndicator(
-      color: AppColors.primary,
-      onRefresh: () => _load(silent: true),
-      child: _bookings.isEmpty
-          ? ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(AppSpacing.xl),
-              children: [_buildEmptyState()],
-            )
-          : ListView.builder(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.md,
-                AppSpacing.sm,
-                AppSpacing.md,
-                AppSpacing.xxl,
-              ),
-              itemCount: _bookings.length + 1,
-              itemBuilder: (context, index) {
-                if (index == 0) return _buildSummary();
-                final booking = _bookings[index - 1];
-                return _buildBookingCard(booking);
-              },
-            ),
-    );
-  }
-
-  Widget _buildSummary() {
-    final today = DateTime.now();
-    final todayCount = _bookings.where((b) {
-      final d = b.travelDate;
-      return d != null &&
-          d.year == today.year &&
-          d.month == today.month &&
-          d.day == today.day;
-    }).length;
-    final seenCount = _bookings.where((b) => b.agentSeen).length;
-    final readyCount = _bookings.where((b) => b.ticketProofImage != null).length;
-
+  Widget _buildAttentionBanner() {
+    final count = _attentionCount;
     return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
-      padding: const EdgeInsets.all(AppSpacing.md),
+      margin: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-        border: Border.all(color: AppColors.border),
+        color: AppColors.errorBg,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        border: Border.all(color: AppColors.errorBorder),
       ),
       child: Row(
         children: [
-          _summaryMetric('Today', '$todayCount'),
-          _summaryDivider(),
-          _summaryMetric('Seen', '$seenCount'),
-          _summaryDivider(),
-          _summaryMetric('Ready', '$readyCount'),
-        ],
-      ),
-    );
-  }
-
-  Widget _summaryMetric(String label, String value) {
-    return Expanded(
-      child: Column(
-        children: [
-          Text(
-            value,
-            style: AppTypography.headlineSmall.copyWith(
-              color: AppColors.primary,
+          const Icon(Icons.flag_rounded, size: 16, color: AppColors.error),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              '$count booking${count == 1 ? '' : 's'} need your attention',
+              style: AppTypography.labelMedium.copyWith(
+                color: AppColors.error,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: AppTypography.labelSmall.copyWith(
-              color: AppColors.textMuted,
+          GestureDetector(
+            onTap: () => setState(() => _attentionOnly = false),
+            child: Text(
+              'Show all',
+              style: AppTypography.labelMedium.copyWith(
+                color: AppColors.primary,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -529,39 +636,99 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     );
   }
 
-  Widget _summaryDivider() {
-    return Container(width: 1, height: 26, color: AppColors.border);
+  Widget _buildSkeleton() {
+    return ListView.builder(
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(20, 56, 20, 24),
+      itemCount: 5,
+      itemBuilder: (_, _) => Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.border.withValues(alpha: 0.6)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: const BoxDecoration(
+                color: AppColors.border,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    height: 13,
+                    width: 150,
+                    decoration: BoxDecoration(
+                      color: AppColors.border,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    height: 11,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: AppColors.border.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildEmptyState() {
-    return Column(
-      children: [
-        const SizedBox(height: 80),
-        Container(
-          width: 72,
-          height: 72,
-          decoration: BoxDecoration(
-            color: AppColors.primaryLight,
-            borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
+    final attentionMode = _attentionOnly;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 72),
+      child: Column(
+        children: [
+          Container(
+            width: 88,
+            height: 88,
+            decoration: BoxDecoration(
+              color: attentionMode ? AppColors.errorBg : AppColors.surfaceVariant,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              attentionMode
+                  ? Icons.check_rounded
+                  : Icons.confirmation_num_outlined,
+              size: 40,
+              color: attentionMode ? AppColors.error : AppColors.textMuted,
+            ),
           ),
-          child: const Icon(
-            Icons.event_available_rounded,
-            size: 34,
-            color: AppColors.primary,
+          const SizedBox(height: 20),
+          Text(
+            attentionMode ? 'You are all caught up' : 'No bookings right now',
+            style: AppTypography.titleMedium.copyWith(color: AppColors.text),
           ),
-        ),
-        const SizedBox(height: AppSpacing.md),
-        Text('No bookings right now', style: AppTypography.titleMedium),
-        const SizedBox(height: AppSpacing.xs),
-        Text(
-          'New bookings for your assigned routes will appear here automatically.',
-          textAlign: TextAlign.center,
-          style: AppTypography.bodySmall.copyWith(
-            color: AppColors.textSub,
-            height: 1.5,
+          const SizedBox(height: 6),
+          Text(
+            attentionMode
+                ? 'Every paid booking already has its physical ticket photo.'
+                : 'New bookings for your assigned routes will appear here automatically.',
+            textAlign: TextAlign.center,
+            style: AppTypography.bodySmall.copyWith(
+              color: AppColors.textMuted,
+              height: 1.5,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -572,25 +739,39 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.cloud_off_rounded,
-              size: 40,
-              color: AppColors.textMuted,
+            Container(
+              width: 80,
+              height: 80,
+              decoration: const BoxDecoration(
+                color: AppColors.errorBg,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.cloud_off_rounded,
+                size: 36,
+                color: AppColors.error,
+              ),
             ),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpacing.lg),
+            Text(
+              'Could not load your bookings',
+              style: AppTypography.titleMedium,
+            ),
+            const SizedBox(height: 6),
             Text(
               _error!,
               textAlign: TextAlign.center,
-              style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            FilledButton(
-              onPressed: () => _load(),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.textMuted,
+                height: 1.5,
               ),
-              child: const Text('Try again'),
+            ),
+            const SizedBox(height: AppSpacing.lg),
+            FilledButton.icon(
+              onPressed: () => _load(),
+              style: _primaryButtonStyle(),
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Try again'),
             ),
           ],
         ),
@@ -598,118 +779,281 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     );
   }
 
+  // ── Booking card ──────────────────────────────────────────────────────────
+
   Widget _buildBookingCard(Booking booking) {
-    final busy = _busy.contains(booking.id);
-    final paid = booking.paymentStatus == 'paid';
-    final ready = booking.ticketProofImage != null &&
-        booking.ticketProofImage!.isNotEmpty;
+    final expanded = _expanded.contains(booking.id);
+    final needsAttention = _needsAttention(booking);
     final date = booking.travelDate;
     final dateLabel = date == null ? '—' : _dateFormat.format(date);
-    final isToday = date != null && _isSameDay(date, DateTime.now());
+    final time = booking.travelTime;
     final passenger = booking.passengerDetails.isNotEmpty
         ? booking.passengerDetails.first
         : null;
-    final phone = passenger?.phone ?? booking.phone ?? booking.contactPhone;
+    final passengerName = passenger?.name.isNotEmpty == true
+        ? passenger!.name
+        : 'Passenger';
+
+    final subtitle = [
+      passengerName,
+      '$dateLabel${time != null && time.isNotEmpty ? ' · $time' : ''}',
+    ].join(' · ');
 
     return Container(
-      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${booking.origin} → ${booking.destination}',
-                        style: AppTypography.titleMedium,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        booking.referenceCode,
-                        style: AppTypography.bodySmall.copyWith(
-                          color: AppColors.textMuted,
-                          fontFamily: 'monospace',
-                          letterSpacing: 0.4,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                _statusPill(booking),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Wrap(
-              spacing: AppSpacing.sm,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                _meta(
-                  Icons.person_outline_rounded,
-                  passenger?.name.isNotEmpty == true
-                      ? passenger!.name
-                      : 'Passenger',
-                ),
-                if (phone != null && phone.isNotEmpty)
-                  _meta(Icons.call_outlined, phone),
-                _meta(
-                  Icons.event_seat_outlined,
-                  '${booking.seats} seat${booking.seats == 1 ? '' : 's'}'
-                  '${booking.seatNumbers.isNotEmpty ? ' · ${booking.seatNumbers.join(', ')}' : ''}',
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: AppSpacing.sm,
-              runSpacing: 6,
-              children: [
-                _meta(
-                  isToday
-                      ? Icons.today_rounded
-                      : Icons.calendar_today_outlined,
-                  '$dateLabel${booking.travelTime != null ? ' · ${booking.travelTime}' : ''}',
-                  emphasize: isToday,
-                ),
-                if (booking.pickupPoint != null &&
-                    booking.pickupPoint!.isNotEmpty)
-                  _meta(
-                    Icons.location_on_outlined,
-                    booking.pickupPoint!,
-                  ),
-              ],
-            ),
-            if (booking.agentSeen) ...[
-              const SizedBox(height: AppSpacing.sm),
-              _inlineFlag(
-                icon: Icons.visibility_rounded,
-                label: 'Seen by agent',
-                color: const Color(0xFF15803D),
-                background: const Color(0xFFDCFCE7),
-              ),
-            ],
-            if (ready) ...[
-              const SizedBox(height: AppSpacing.sm),
-              _buildProofRow(booking),
-            ],
-            const SizedBox(height: AppSpacing.md),
-            _buildActions(booking, busy: busy, paid: paid, ready: ready),
-          ],
+        color: AppColors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: needsAttention ? AppColors.errorBorder : AppColors.border,
         ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          splashColor: AppColors.primary.withValues(alpha: 0.04),
+          highlightColor: AppColors.primary.withValues(alpha: 0.02),
+          onTap: () {
+            setState(() {
+              if (expanded) {
+                _expanded.remove(booking.id);
+              } else {
+                _expanded.add(booking.id);
+              }
+            });
+          },
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _bookingAvatar(booking),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '${booking.origin} → ${booking.destination}',
+                            style: AppTypography.titleSmall.copyWith(
+                              color: AppColors.text,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            subtitle,
+                            style: AppTypography.bodySmall.copyWith(
+                              color: AppColors.textSub,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        _statusPill(booking),
+                        const SizedBox(height: 4),
+                        AnimatedRotation(
+                          turns: expanded ? 0.5 : 0,
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeOutCubic,
+                          child: const Icon(
+                            Icons.expand_more_rounded,
+                            size: 18,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                  alignment: Alignment.topCenter,
+                  child: expanded
+                      ? _buildExpandedDetails(
+                          booking,
+                          passenger: passenger,
+                          dateLabel: dateLabel,
+                          time: time,
+                          busy: _busy.contains(booking.id),
+                        )
+                      : const SizedBox(width: double.infinity),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _bookingAvatar(Booking booking) {
+    final ready = _hasProof(booking);
+    final unpaid = booking.paymentStatus != 'paid';
+    final (Color bg, Color fg, IconData icon) = ready
+        ? (const Color(0xFFDCFCE7), const Color(0xFF15803D),
+            Icons.check_circle_outline_rounded)
+        : unpaid
+            ? (AppColors.surfaceVariant, AppColors.textMuted,
+                Icons.hourglass_bottom_rounded)
+            : booking.agentSeen
+                ? (AppColors.warningBg, AppColors.warning,
+                    Icons.photo_camera_outlined)
+                : (AppColors.primaryLight, AppColors.primary,
+                    Icons.confirmation_number_outlined);
+
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
+      child: Icon(icon, size: 20, color: fg),
+    );
+  }
+
+  Widget _statusPill(Booking booking) {
+    final (String label, Color fg, Color bg) = _hasProof(booking)
+        ? ('Ready', const Color(0xFF15803D), const Color(0xFFDCFCE7))
+        : booking.paymentStatus != 'paid'
+            ? ('Unpaid', AppColors.textSub, AppColors.surfaceVariant)
+            : ('Needs action', AppColors.error, AppColors.errorBg);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
+      ),
+      child: Text(
+        label,
+        style: AppTypography.labelSmall.copyWith(
+          color: fg,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildExpandedDetails(
+    Booking booking, {
+    required PassengerDetail? passenger,
+    required String dateLabel,
+    required String? time,
+    required bool busy,
+  }) {
+    final phone = passenger?.phone ?? booking.phone ?? booking.contactPhone;
+    final paid = booking.paymentStatus == 'paid';
+    final ready = _hasProof(booking);
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Divider(height: 1, color: AppColors.border),
+          const SizedBox(height: 8),
+          _detailRow(
+            Icons.confirmation_number_outlined,
+            'Reference',
+            booking.referenceCode,
+            mono: true,
+          ),
+          if (passenger != null && passenger.name.isNotEmpty)
+            _detailRow(Icons.person_outline_rounded, 'Passenger', passenger.name),
+          if (phone != null && phone.isNotEmpty)
+            _detailRow(Icons.call_outlined, 'Phone', phone),
+          _detailRow(
+            Icons.event_outlined,
+            'Travel',
+            '$dateLabel${time != null && time.isNotEmpty ? ' · $time' : ''}',
+          ),
+          _detailRow(
+            Icons.event_seat_outlined,
+            'Seats',
+            '${booking.seats} seat${booking.seats == 1 ? '' : 's'}'
+            '${booking.seatNumbers.isNotEmpty ? ' · ${booking.seatNumbers.join(', ')}' : ''}',
+          ),
+          if (booking.pickupPoint != null && booking.pickupPoint!.isNotEmpty)
+            _detailRow(
+              Icons.location_on_outlined,
+              'Pickup',
+              booking.pickupPoint!,
+            ),
+          if (booking.totalAmount > 0)
+            _detailRow(
+              Icons.payments_outlined,
+              'Total',
+              '${_amountFormat.format(booking.totalAmount)} RWF',
+            ),
+          _detailRow(
+            Icons.verified_outlined,
+            'Payment',
+            paid ? 'Paid' : 'Awaiting payment',
+            valueColor: paid ? const Color(0xFF15803D) : AppColors.warning,
+          ),
+          if (ready) ...[
+            const SizedBox(height: 6),
+            _buildProofRow(booking),
+          ],
+          const SizedBox(height: 12),
+          _buildActions(
+            booking,
+            busy: busy,
+            paid: paid,
+            ready: ready,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _detailRow(
+    IconData icon,
+    String label,
+    String value, {
+    Color? valueColor,
+    bool mono = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 15, color: AppColors.textMuted),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 78,
+            child: Text(
+              label,
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.textMuted,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.end,
+              style: AppTypography.bodySmall.copyWith(
+                color: valueColor ?? AppColors.text,
+                fontWeight: FontWeight.w600,
+                fontFamily: mono ? 'monospace' : null,
+                letterSpacing: mono ? 0.3 : null,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -719,7 +1063,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     return GestureDetector(
       onTap: () => _showProof(booking),
       child: Container(
-        padding: const EdgeInsets.all(AppSpacing.sm),
+        padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
@@ -731,8 +1075,8 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
               borderRadius: BorderRadius.circular(6),
               child: url == null
                   ? Container(
-                      width: 42,
-                      height: 42,
+                      width: 44,
+                      height: 44,
                       color: AppColors.primaryLight,
                       child: const Icon(
                         Icons.receipt_long_rounded,
@@ -742,19 +1086,19 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
                     )
                   : CachedNetworkImage(
                       imageUrl: url,
-                      width: 42,
-                      height: 42,
+                      width: 44,
+                      height: 44,
                       fit: BoxFit.cover,
                       memCacheWidth: 160,
                       httpHeaders: _imageHeaders,
-                      placeholder: (_, __) => Container(
-                        width: 42,
-                        height: 42,
+                      placeholder: (_, _) => Container(
+                        width: 44,
+                        height: 44,
                         color: AppColors.surfaceVariant,
                       ),
-                      errorWidget: (_, __, ___) => Container(
-                        width: 42,
-                        height: 42,
+                      errorWidget: (_, _, _) => Container(
+                        width: 44,
+                        height: 44,
                         color: AppColors.primaryLight,
                         child: const Icon(
                           Icons.image_not_supported_outlined,
@@ -764,7 +1108,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
                       ),
                     ),
             ),
-            const SizedBox(width: AppSpacing.sm),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -773,13 +1117,14 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
                     'Ticket photo attached',
                     style: AppTypography.labelMedium.copyWith(
                       color: AppColors.text,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                   const SizedBox(height: 1),
                   Text(
                     'Tap to inspect the proof',
                     style: AppTypography.bodySmall.copyWith(
-                      color: AppColors.textSub,
+                      color: AppColors.textMuted,
                       fontSize: 11,
                     ),
                   ),
@@ -804,7 +1149,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
   }) {
     if (busy) {
       return const SizedBox(
-        height: 40,
+        height: 46,
         child: Center(
           child: SizedBox(
             width: 20,
@@ -819,21 +1164,30 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     }
 
     if (!paid) {
-      return Row(
-        children: [
-          const Icon(
-            Icons.hourglass_top_rounded,
-            size: 16,
-            color: AppColors.textMuted,
-          ),
-          const SizedBox(width: 6),
-          Text(
-            'Waiting for the passenger’s payment',
-            style: AppTypography.bodySmall.copyWith(
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.hourglass_top_rounded,
+              size: 16,
               color: AppColors.textMuted,
             ),
-          ),
-        ],
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Waiting for the passenger’s payment',
+                style: AppTypography.bodySmall.copyWith(
+                  color: AppColors.textSub,
+                ),
+              ),
+            ),
+          ],
+        ),
       );
     }
 
@@ -842,17 +1196,9 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
         width: double.infinity,
         child: FilledButton.icon(
           onPressed: () => _markSeen(booking),
+          style: _primaryButtonStyle(),
           icon: const Icon(Icons.visibility_rounded, size: 18),
           label: const Text('Confirm I have seen this booking'),
-          style: FilledButton.styleFrom(
-            backgroundColor: AppColors.primary,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 11),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-            ),
-            textStyle: AppTypography.buttonMedium,
-          ),
         ),
       );
     }
@@ -862,17 +1208,9 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
         width: double.infinity,
         child: FilledButton.icon(
           onPressed: () => _captureAndMarkReady(booking),
+          style: _primaryButtonStyle(),
           icon: const Icon(Icons.camera_alt_rounded, size: 18),
           label: const Text('Mark ready & photograph ticket'),
-          style: FilledButton.styleFrom(
-            backgroundColor: const Color(0xFF15803D),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 11),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-            ),
-            textStyle: AppTypography.buttonMedium,
-          ),
         ),
       );
     }
@@ -882,41 +1220,47 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
         Expanded(
           child: OutlinedButton.icon(
             onPressed: () => _showProof(booking),
+            style: _outlineButtonStyle(color: AppColors.primary),
             icon: const Icon(Icons.photo_outlined, size: 17),
             label: const Text('View proof'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.primary,
-              side: const BorderSide(color: AppColors.border),
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-              ),
-              textStyle: AppTypography.buttonSmall.copyWith(
-                color: AppColors.primary,
-              ),
-            ),
           ),
         ),
         const SizedBox(width: AppSpacing.sm),
         Expanded(
           child: OutlinedButton.icon(
             onPressed: () => _captureAndMarkReady(booking),
+            style: _outlineButtonStyle(color: AppColors.textSub),
             icon: const Icon(Icons.camera_alt_outlined, size: 17),
             label: const Text('Replace photo'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.textSub,
-              side: const BorderSide(color: AppColors.border),
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-              ),
-              textStyle: AppTypography.buttonSmall.copyWith(
-                color: AppColors.textSub,
-              ),
-            ),
           ),
         ),
       ],
+    );
+  }
+
+  ButtonStyle _primaryButtonStyle() {
+    return FilledButton.styleFrom(
+      backgroundColor: AppColors.primary,
+      foregroundColor: AppColors.white,
+      minimumSize: const Size.fromHeight(46),
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+      ),
+      textStyle: AppTypography.buttonMedium,
+    );
+  }
+
+  ButtonStyle _outlineButtonStyle({required Color color}) {
+    return OutlinedButton.styleFrom(
+      foregroundColor: color,
+      side: const BorderSide(color: AppColors.border),
+      minimumSize: const Size.fromHeight(44),
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+      ),
+      textStyle: AppTypography.buttonSmall.copyWith(color: color),
     );
   }
 
@@ -926,7 +1270,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     showDialog<void>(
       context: context,
       builder: (ctx) => Dialog(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.white,
         insetPadding: const EdgeInsets.all(AppSpacing.md),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
@@ -968,7 +1312,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
                     fit: BoxFit.contain,
                     memCacheWidth: 1600,
                     httpHeaders: _imageHeaders,
-                    placeholder: (_, __) => const SizedBox(
+                    placeholder: (_, _) => const SizedBox(
                       height: 260,
                       child: Center(
                         child: CircularProgressIndicator(
@@ -977,7 +1321,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
                         ),
                       ),
                     ),
-                    errorWidget: (_, __, ___) => const SizedBox(
+                    errorWidget: (_, _, _) => const SizedBox(
                       height: 260,
                       child: Center(
                         child: Text('Could not load the photo'),
@@ -992,83 +1336,4 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
       ),
     );
   }
-
-  Widget _statusPill(Booking booking) {
-    final ready = booking.ticketProofImage != null &&
-        booking.ticketProofImage!.isNotEmpty;
-    final (String label, Color fg, Color bg) = ready
-        ? ('Ready', const Color(0xFF15803D), const Color(0xFFDCFCE7))
-        : booking.agentSeen
-            ? ('Seen', AppColors.primary, AppColors.primaryLight)
-            : booking.paymentStatus == 'paid'
-                ? ('New', const Color(0xFFB45309), const Color(0xFFFEF3C7))
-                : ('Unpaid', AppColors.textSub, AppColors.surfaceVariant);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
-      ),
-      child: Text(
-        label,
-        style: AppTypography.labelSmall.copyWith(
-          color: fg,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-
-  Widget _meta(IconData icon, String text, {bool emphasize = false}) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-          icon,
-          size: 13,
-          color: emphasize ? AppColors.primary : AppColors.textMuted,
-        ),
-        const SizedBox(width: 4),
-        Text(
-          text,
-          style: AppTypography.bodySmall.copyWith(
-            color: emphasize ? AppColors.primary : AppColors.textSub,
-            fontWeight: emphasize ? FontWeight.w600 : FontWeight.w400,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _inlineFlag({
-    required IconData icon,
-    required String label,
-    required Color color,
-    required Color background,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: background,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 12, color: color),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: AppTypography.labelSmall.copyWith(
-              color: color,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  bool _isSameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
 }

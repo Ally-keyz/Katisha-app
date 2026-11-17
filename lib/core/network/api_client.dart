@@ -210,6 +210,12 @@ class ApiClient {
     final statusCode = e.response?.statusCode;
     final message = _extractErrorMessage(e.response?.data);
     if (statusCode == 401) return const AuthFailure();
+    if (statusCode == 413) {
+      return ServerFailure(
+        'That file is too large. Please use a smaller photo and try again.',
+        statusCode: statusCode,
+      );
+    }
     if (statusCode != null && statusCode >= 400) {
       return ServerFailure(message, statusCode: statusCode);
     }
@@ -223,6 +229,12 @@ class ApiClient {
           data['error'] as String? ??
           'An unexpected error occurred.';
     }
-    return data.toString();
+    final text = data.toString().trim();
+    // A proxied/deployed API can still answer with an HTML error page (nginx,
+    // Express's default handler). Never show raw markup to the user.
+    if (text.startsWith('<') || text.toLowerCase().contains('<html')) {
+      return 'Something went wrong on the server. Please try again.';
+    }
+    return text.isEmpty ? 'An unexpected error occurred.' : text;
   }
 }

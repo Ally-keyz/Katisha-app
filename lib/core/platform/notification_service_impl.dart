@@ -20,6 +20,11 @@ const String _kSnoozeActionId = 'snooze';
 const String _kJourneyChannelId = 'Katisha_journey_alerts_v2';
 const String _kBookingChannelId = 'Katisha_booking_alerts_v2';
 
+/// White silhouette drawable used as the Android status-bar icon. Mipmap
+/// launcher icons are not valid notification small icons (adaptive icons can
+/// make the notification fail to render at all).
+const String _kSmallIcon = 'ic_stat_katisha';
+
 class NotificationServiceImpl implements NotificationService {
   final FlutterLocalNotificationsPlugin _plugin;
   final SharedPreferences _prefs;
@@ -49,7 +54,7 @@ class NotificationServiceImpl implements NotificationService {
       importance: Importance.max,
       priority: Priority.max,
       ticker: 'Departure Alert',
-      icon: '@mipmap/ic_launcher',
+      icon: _kSmallIcon,
       sound: const RawResourceAndroidNotificationSound('notification'),
       playSound: true,
       enableVibration: true,
@@ -78,7 +83,7 @@ class NotificationServiceImpl implements NotificationService {
       importance: Importance.max,
       priority: Priority.max,
       ticker: 'Booking Alert',
-      icon: '@mipmap/ic_launcher',
+      icon: _kSmallIcon,
       sound: const RawResourceAndroidNotificationSound('notification'),
       playSound: true,
       enableVibration: true,
@@ -112,11 +117,20 @@ class NotificationServiceImpl implements NotificationService {
     );
   }
 
-  @override
-  Future<void> initialize({bool requestPermissions = true}) async {
+  /// The plugin, timezone database and Android channels only need to be set up
+  /// once. [initialize] can be reached from app startup, the login flow and the
+  /// background snooze handler, so the work is memoized to avoid racing two
+  /// initializations (which could swallow the permission prompt).
+  Future<void>? _initFuture;
+
+  Future<void> _ensureInitialized() {
+    return _initFuture ??= _doInitialize();
+  }
+
+  Future<void> _doInitialize() async {
     tz_data.initializeTimeZones();
 
-    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidInit = AndroidInitializationSettings(_kSmallIcon);
     final iosInit = DarwinInitializationSettings(
       requestAlertPermission: false,
       requestBadgePermission: false,
@@ -190,10 +204,15 @@ class NotificationServiceImpl implements NotificationService {
           enableVibration: true,
         ),
       );
-      if (requestPermissions) {
-        await androidPlugin?.requestNotificationsPermission();
-      }
-    } else if (Platform.isIOS && requestPermissions) {
+    }
+  }
+
+  @override
+  Future<void> initialize({bool requestPermissions = true}) async {
+    await _ensureInitialized();
+    if (requestPermissions && Platform.isAndroid) {
+      await requestPermission();
+    } else if (requestPermissions && Platform.isIOS) {
       // Permission is requested explicitly from [requestPermission] during the
       // login flow, so don't prompt during background initialization.
     }
@@ -206,26 +225,44 @@ class NotificationServiceImpl implements NotificationService {
 
   @override
   Future<bool> requestPermission() async {
+    try {
+      // Never prompt before the plugin is ready — the request would be lost and
+      // Android 13+ would keep suppressing every notification.
+      await _ensureInitialized();
+    } catch (_) {
+      return false;
+    }
+
     if (Platform.isAndroid) {
       final androidPlugin =
           _plugin.resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin>();
       if (androidPlugin != null) {
-        final granted = await androidPlugin.requestNotificationsPermission();
-        return granted ?? false;
+        try {
+          final granted = await androidPlugin.requestNotificationsPermission();
+          return granted ?? false;
+        } catch (_) {
+          return false;
+        }
       }
     } else if (Platform.isIOS) {
       final iosPlugin =
           _plugin.resolvePlatformSpecificImplementation<
               IOSFlutterLocalNotificationsPlugin>();
       if (iosPlugin != null) {
-        final granted = await iosPlugin.requestPermissions(
-          alert: true,
-          badge: true,
-          sound: true,
-          critical: true,
-        );
-        return granted ?? false;
+        try {
+          // Do not request `critical` here: critical alerts require a special
+          // Apple entitlement and asking for it without one makes the whole
+          // authorization request fail on iOS.
+          final granted = await iosPlugin.requestPermissions(
+            alert: true,
+            badge: true,
+            sound: true,
+          );
+          return granted ?? false;
+        } catch (_) {
+          return false;
+        }
       }
     }
     return false;

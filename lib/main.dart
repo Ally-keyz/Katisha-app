@@ -111,11 +111,14 @@ class _KatishaAppState extends ConsumerState<KatishaApp> {
     if (token == null || token.isEmpty) return;
 
     final socket = ref.read(socketServiceProvider);
-    if (socket.isConnected) return;
-
-    _socketEventSub?.cancel();
-    _socketEventSub = socket.onEvent.listen(_handleSocketEvent);
-    unawaited(socket.connect(token));
+    // Always make sure the handler is attached. Returning early when the socket
+    // happened to be connected could leave `_socketEventSub` null (for example
+    // after a logout/login cycle), which silently suppressed every device
+    // notification for the rest of the session.
+    _socketEventSub ??= socket.onEvent.listen(_handleSocketEvent);
+    if (!socket.isConnected) {
+      unawaited(socket.connect(token));
+    }
   }
 
   void _handleSocketEvent(SocketEvent event) {
