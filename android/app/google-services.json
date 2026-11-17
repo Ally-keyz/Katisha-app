@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "41208101853",
+    "project_id": "katisha-c19f3",
+    "storage_bucket": "katisha-c19f3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:41208101853:android:b0910e3bf9437053db5434",
+        "android_client_info": {
+          "package_name": "rw.katisha.today"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDCaxOLc_PTT59eKOUxAH0HvafuQpzcPiI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
