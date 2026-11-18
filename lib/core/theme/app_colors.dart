@@ -34,9 +34,9 @@ abstract final class AppColors {
   static const Color success = Color(0xFF0854AE);
   static const Color successBg = Color(0xFFDBEAFE);
 
-  /// Money-in actions (pay now): the only green in the flow, so the final
-  /// commitment reads as "this moves money" rather than a generic step.
-  static const Color paymentGreen = Color(0xFF16A34A);
+  /// Money-in actions (pay now). A deep emerald rather than a bright green:
+  /// it still reads as "go", but stays calm next to the blue brand palette.
+  static const Color paymentAction = Color(0xFF047857);
 
   // ── Booking Status ───────────────────────────
   static const Color statusPendingAgent = Color(0xFF7C3AED);

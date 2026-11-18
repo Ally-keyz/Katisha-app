@@ -254,6 +254,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     _applyExtraParams();
     await _requestLocation();
     if (!mounted) return;
+    // Warm the payment catalogue now, in the background. The traveller then
+    // spends the route/date/seat steps loading it, so the payment modal opens
+    // with the options already in memory instead of showing a spinner.
+    unawaited(_loadPaymentOptions());
     _autoOpenDestinationPicker();
   }
 
@@ -3952,7 +3956,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   /// step-navigation "Continue" button stays in the brand blue.
   ButtonStyle _paymentModalButtonStyle({bool isPayment = false}) {
     return ElevatedButton.styleFrom(
-      backgroundColor: isPayment ? AppColors.paymentGreen : AppColors.primary,
+      backgroundColor: isPayment ? AppColors.paymentAction : AppColors.primary,
       foregroundColor: AppColors.white,
       disabledBackgroundColor: AppColors.textMuted,
       padding: const EdgeInsets.symmetric(vertical: 16),
