@@ -1,23 +1,28 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:lottie/lottie.dart';
+import '../../../../core/auth/session.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/socket_service.dart';
 import '../../../../core/error/failures.dart';
 import '../../../../core/platform/platform_providers.dart';
+import '../../../../core/platform/location_service.dart';
 import '../../../../core/platform/ticket_sync_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/widgets/city_autocomplete_field.dart' show cityOptions;
 import '../../../../core/widgets/katisha_modal.dart';
+import '../../../../core/widgets/location_permission_dialog.dart';
 import '../../data/booking_repository.dart';
 import '../../../../shared/models/route_model.dart';
 import '../../../../shared/models/booking_model.dart';
+import '../../../../shared/models/payment_options_model.dart';
 import '../../../../shared/utils/service_fee.dart';
 import '../../../../l10n/app_localizations.dart';
 
@@ -139,6 +144,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   String? _destination;
   bool _destinationPickerAutoOpened = false;
 
+  /// Country inferred from the device location, used to preselect the currency
+  /// and mobile-money prices on the payment step. Null until permission is
+  /// granted (or when the fix is outside the region Katisha serves).
+  DeviceLocation? _deviceLocation;
+
+  /// Asked once per install, not on every booking. The OS prompt itself is
+  /// only shown after the in-app explanation dialog is accepted.
+  static const String _locationPromptPrefsKey = 'vdk_location_prompted';
+
   // Step 1: Agency
   List<RouteModel> _routes = [];
   bool _searchingRoutes = false;
@@ -168,6 +182,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // PAYMENT_METHODS default)
   String _paymentMethod = 'mom';
   String? _paymentChannel; // 'pawapay_online' (only option)
+
+  // Country-aware payment options (pawaPay active configuration).
+  PaymentOptions? _paymentOptions;
+  PaymentCountryOption? _paymentCountry;
+  PaymentProviderOption? _paymentProvider;
+  bool _loadingPaymentOptions = false;
+  String? _paymentOptionsError;
 
   // Payment modal state (matches web flow: summary -> green button ->
   // Pay Online modal)
@@ -228,9 +249,95 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _applyExtraParams();
-      _autoOpenDestinationPicker();
+      unawaited(_initializeFirstStep());
     });
+  }
+
+  /// Location comes first: the destination picker auto-opens as soon as the
+  /// first step is visible, and stacking the permission story behind that sheet
+  /// would make the location prompt appear out of nowhere later.
+  Future<void> _initializeFirstStep() async {
+    _applyExtraParams();
+    await _maybeAskForLocation();
+    if (!mounted) return;
+    _autoOpenDestinationPicker();
+  }
+
+  /// Explains why Katisha needs the location, then triggers the OS prompt only
+  /// if the traveller agrees. A previously granted permission is reused
+  /// silently; a previous refusal is not repeated on every launch.
+  Future<void> _maybeAskForLocation() async {
+    final service = ref.read(locationServiceProvider);
+    final access = await service.checkAccess();
+    if (!mounted) return;
+
+    if (access == LocationAccess.granted) {
+      final location = await service.currentLocation();
+      if (location != null && mounted) {
+        setState(() => _deviceLocation = location);
+      }
+      return;
+    }
+
+    final prefs = ref.read(sharedPreferencesProvider);
+    if (prefs.getBool(_locationPromptPrefsKey) ?? false) return;
+
+    final l10n = AppLocalizations.of(context);
+    final allow = await showLocationPermissionDialog(
+      context: context,
+      title: l10n.translate('location_permission_title'),
+      message: l10n.translate('location_permission_body'),
+      allowLabel: l10n.translate('location_permission_allow'),
+      notNowLabel: l10n.translate('location_permission_not_now'),
+    );
+    await prefs.setBool(_locationPromptPrefsKey, true);
+    if (!allow || !mounted) return;
+
+    await _requestLocation(service);
+  }
+
+  Future<void> _requestLocation(LocationService service) async {
+    final access = await service.ensureAccess();
+    if (!mounted) return;
+
+    if (access == LocationAccess.granted) {
+      final location = await service.currentLocation();
+      if (location != null && mounted) {
+        setState(() => _deviceLocation = location);
+      }
+      return;
+    }
+
+    final l10n = AppLocalizations.of(context);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    messenger.hideCurrentSnackBar();
+
+    final canOpenSettings =
+        access == LocationAccess.deniedForever ||
+        access == LocationAccess.serviceDisabled;
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          access == LocationAccess.serviceDisabled
+              ? l10n.translate('location_service_disabled')
+              : l10n.translate('location_permission_denied'),
+        ),
+        behavior: SnackBarBehavior.floating,
+        action: canOpenSettings
+            ? SnackBarAction(
+                label: l10n.translate('location_permission_settings'),
+                onPressed: () {
+                  if (access == LocationAccess.serviceDisabled) {
+                    unawaited(service.openLocationSettings());
+                  } else {
+                    unawaited(service.openAppSettings());
+                  }
+                },
+              )
+            : null,
+      ),
+    );
   }
 
   /// Opens the destination picker automatically when the wizard starts on the
@@ -514,6 +621,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         ..reset()
         ..forward();
       _scrollToTop();
+      // Load the country-aware payment options as the payment step opens, so
+      // the amounts are already shown in the traveller's currency.
+      if (_currentStep == 4) {
+        unawaited(_loadPaymentOptions());
+      }
       // Auto-open the schedule pickers when the schedule step is reached,
       // mirroring how the destination picker auto-opens.
       if (_currentStep == 2) {
@@ -663,6 +775,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       'paymentChannel': channel,
       'paymentMethod': _paymentMethod,
       'phone': _normalizePhone(_phoneController.text),
+      'paymentCountry': _paymentCountry?.code,
+      'paymentCurrency': _paymentCurrency,
+      if (_paymentProvider != null)
+        'paymentProvider': _paymentProvider!.provider,
     };
 
     if (_selectedPickupPoint != null) {
@@ -1428,6 +1544,28 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           l10n.translate('choose_route_and_time'),
           style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
         ),
+        if (_deviceLocation != null) ...[
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              const Icon(
+                Icons.my_location_rounded,
+                size: 14,
+                color: AppColors.primary,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  l10n.translate('location_price_hint'),
+                  style: AppTypography.bodySmall.copyWith(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
         const SizedBox(height: AppSpacing.xl),
         _buildLabel(l10n.translate('origin').toUpperCase()),
         const SizedBox(height: AppSpacing.xs),
@@ -2379,12 +2517,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   /// Slots the selected route can actually depart on. Falls back to the
   /// half-hour grid when the route has no explicit departure times.
   List<String> _baseSlotsForAvailability() {
-    final routeTimes = (_selectedRoute?.departureTimes ?? const <String>[])
-        .map((t) => t.trim())
-        .where((t) => t.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort();
+    final routeTimes =
+        (_selectedRoute?.departureTimes ?? const <String>[])
+            .map((t) => t.trim())
+            .where((t) => t.isNotEmpty)
+            .toSet()
+            .toList()
+          ..sort();
     return routeTimes.isNotEmpty ? routeTimes : _allHalfHourSlots();
   }
 
@@ -2402,9 +2541,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   DateTime get _minSelectableDate {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    return _hasBookableSlotToday()
-        ? today
-        : today.add(const Duration(days: 1));
+    return _hasBookableSlotToday() ? today : today.add(const Duration(days: 1));
   }
 
   /// Month containing [_minSelectableDate]; earlier months have no bookable
@@ -2569,22 +2706,23 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           else
             LayoutBuilder(
               builder: (context, constraints) {
-                // Seven equal columns; the circle fills most of its cell and
-                // scales down on narrow screens so it can never overflow.
-                const double columnSpacing = 2;
-                final cellWidth =
-                    (constraints.maxWidth - columnSpacing * 6) / 7;
-                final diameter = (cellWidth - 2).clamp(34.0, 52.0);
-                final dayFontSize = (diameter * 0.42).clamp(17.0, 21.0);
+                // Minimal calendar: dates are plain text. Only the selected day
+                // gets a filled blue circle — no outlines or borders on the
+                // other cells, which kept the old grid looking like a wall of
+                // buttons.
+                final diameter = (constraints.maxWidth / 7 - 2).clamp(
+                  32.0,
+                  38.0,
+                );
 
                 return GridView.builder(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
                   gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                     crossAxisCount: 7,
-                    childAspectRatio: 1,
-                    mainAxisSpacing: 4,
-                    crossAxisSpacing: columnSpacing,
+                    mainAxisExtent: 44,
+                    mainAxisSpacing: 2,
+                    crossAxisSpacing: 0,
                   ),
                   itemCount: leadingBlanks + availableCount,
                   itemBuilder: (context, index) {
@@ -2604,6 +2742,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                         date.day == today.day;
 
                     return GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTap: () {
                         setState(() {
                           _selectedDate = date;
@@ -2616,53 +2755,47 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                         onDatePicked?.call();
                       },
                       child: Center(
-                        child: Container(
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 180),
+                          curve: Curves.easeOutCubic,
                           width: diameter,
                           height: diameter,
+                          alignment: Alignment.center,
                           decoration: BoxDecoration(
                             color: isSelected
                                 ? AppColors.primary
-                                : isToday
-                                ? AppColors.primaryLight
-                                : AppColors.white,
-                            // Modern calendar look: every date is a small
-                            // circle outlined in the brand blue.
+                                : Colors.transparent,
                             shape: BoxShape.circle,
-                            border: Border.all(
-                              color: isSelected || isToday
-                                  ? AppColors.primary
-                                  : AppColors.primary.withValues(alpha: 0.30),
-                              width: isSelected || isToday ? 1.8 : 1.2,
-                            ),
-                            boxShadow: isSelected
-                                ? [
-                                    BoxShadow(
-                                      color: AppColors.primary.withValues(
-                                        alpha: 0.35,
-                                      ),
-                                      blurRadius: 10,
-                                      spreadRadius: -3,
-                                      offset: const Offset(0, 3),
-                                    ),
-                                  ]
-                                : null,
                           ),
-                          child: Center(
-                            child: Text(
-                              '$day',
-                              style: AppTypography.bodyMedium.copyWith(
-                                fontSize: dayFontSize,
-                                height: 1,
-                                color: isSelected
-                                    ? AppColors.white
-                                    : isToday
-                                    ? AppColors.primaryDark
-                                    : AppColors.text,
-                                fontWeight: isSelected || isToday
-                                    ? FontWeight.w700
-                                    : FontWeight.w600,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                '$day',
+                                style: AppTypography.bodyMedium.copyWith(
+                                  fontSize: 14,
+                                  height: 1,
+                                  color: isSelected
+                                      ? AppColors.white
+                                      : isToday
+                                      ? AppColors.primary
+                                      : AppColors.text,
+                                  fontWeight: isSelected
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                ),
                               ),
-                            ),
+                              if (isToday && !isSelected)
+                                Container(
+                                  width: 3,
+                                  height: 3,
+                                  margin: const EdgeInsets.only(top: 3),
+                                  decoration: const BoxDecoration(
+                                    color: AppColors.primary,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
                       ),
@@ -2911,6 +3044,89 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   // ── Step 4: Payment ──
 
+  /// Loads pawaPay's active countries/providers and preselects the traveller's
+  /// country: their profile phone first, then the phone's region, then the
+  /// server's fallback (Rwanda). Users can change the country in the sheet.
+  Future<void> _loadPaymentOptions() async {
+    if (_loadingPaymentOptions) return;
+    if (_paymentOptions != null && _paymentCountry != null) return;
+
+    setState(() {
+      _loadingPaymentOptions = true;
+      _paymentOptionsError = null;
+    });
+
+    final result = await _repo.getPaymentOptions(
+      phone: ref.read(sessionProvider)?.phone,
+      country: _deviceLocation?.countryIso2 ?? _deviceCountryIso2(),
+    );
+    if (!mounted) return;
+
+    result.fold(
+      (failure) => setState(() {
+        _loadingPaymentOptions = false;
+        _paymentOptionsError = failure.message;
+      }),
+      (options) {
+        final country =
+            options.countryByCode(options.detectedCountry) ??
+            options.defaultCountry;
+        setState(() {
+          _paymentOptions = options;
+          _loadingPaymentOptions = false;
+          _paymentOptionsError = null;
+          _paymentCountry = country;
+          _paymentProvider = country != null && country.providers.isNotEmpty
+              ? country.providers.first
+              : null;
+          _paymentMethod = _paymentProvider?.method ?? 'mom';
+        });
+      },
+    );
+  }
+
+  /// Region part of the device locale (e.g. `en_RW` → `RW`).
+  String? _deviceCountryIso2() {
+    try {
+      final match = RegExp(
+        r'[_-]([A-Za-z]{2})$',
+      ).firstMatch(Platform.localeName);
+      return match?.group(1)?.toUpperCase();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  void _selectPaymentCountry(PaymentCountryOption country) {
+    setState(() {
+      _paymentCountry = country;
+      _paymentProvider = country.providers.isNotEmpty
+          ? country.providers.first
+          : null;
+      _paymentMethod = _paymentProvider?.method ?? 'mom';
+      // The old number belongs to the previous country's prefix.
+      _phoneController.clear();
+    });
+  }
+
+  void _selectPaymentProvider(PaymentProviderOption provider) {
+    setState(() {
+      _paymentProvider = provider;
+      _paymentMethod = provider.method;
+    });
+  }
+
+  String get _paymentCurrency =>
+      _paymentProvider?.currency ?? _paymentCountry?.currency ?? 'RWF';
+
+  /// The RWF total converted to the selected provider's currency, using the
+  /// same rates the server charges with.
+  int _localAmount(int amountRwf) {
+    final options = _paymentOptions;
+    if (options == null) return amountRwf;
+    return options.convert(amountRwf, _paymentCurrency);
+  }
+
   Widget _buildPaymentStep() {
     final l10n = AppLocalizations.of(context);
     final effectivePrice =
@@ -2924,6 +3140,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final totalAmount = fareTotal + serviceFee;
     final onlineFee = (fareTotal * _payoutRate).round() + _payoutFixed;
     final onlineTotal = totalAmount + onlineFee;
+    final currency = _paymentCurrency;
+    final localTotal = _localAmount(onlineTotal);
 
     return Column(
       key: const ValueKey('step-payment'),
@@ -2966,7 +3184,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           child: Column(
             children: [
               Text(
-                '${_formatAmount(onlineTotal)} RWF',
+                '${_formatAmount(localTotal)} $currency',
                 style: AppTypography.headlineLarge.copyWith(
                   color: AppColors.primary,
                   fontSize: 32,
@@ -2981,10 +3199,57 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 ),
                 textAlign: TextAlign.center,
               ),
+              if (currency != 'RWF')
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    '≈ ${_formatAmount(onlineTotal)} RWF',
+                    style: AppTypography.bodySmall.copyWith(
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ),
+              if (_paymentCountry != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    '${_paymentCountry!.flagEmoji}  ${_paymentCountry!.name}',
+                    style: AppTypography.labelSmall.copyWith(
+                      color: AppColors.textSub,
+                    ),
+                  ),
+                ),
+              if (_loadingPaymentOptions)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'Checking payment options…',
+                    style: AppTypography.labelSmall.copyWith(
+                      color: AppColors.textMuted,
+                    ),
+                  ),
+                ),
+              if (_paymentOptionsError != null && !_loadingPaymentOptions)
+                TextButton(
+                  onPressed: _loadPaymentOptions,
+                  child: Text(
+                    'Payment options unavailable — retry',
+                    style: AppTypography.labelSmall.copyWith(
+                      color: AppColors.primary,
+                    ),
+                  ),
+                ),
               const Divider(height: AppSpacing.xl),
+              if (currency != 'RWF') ...[
+                _buildSummaryRow(
+                  '${l10n.translate('total')} (RWF)',
+                  '${_formatAmount(onlineTotal)} RWF',
+                ),
+                const SizedBox(height: AppSpacing.xs),
+              ],
               _buildSummaryRow(
                 l10n.translate('total'),
-                '${_formatAmount(onlineTotal)} RWF',
+                '${_formatAmount(localTotal)} $currency',
                 isBold: true,
               ),
             ],
@@ -2998,9 +3263,21 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // only option — no payment-method selection sheet is shown ('mom' is the
   // default provider matching the web PAYMENT_METHODS order).
   Future<void> _openOnlinePaymentModal() async {
+    // The sheet needs pawaPay's countries/providers to show the options first.
+    await _loadPaymentOptions();
+    if (!mounted) return;
+    if (_paymentOptions == null) {
+      setState(() {
+        _submitError =
+            _paymentOptionsError ??
+            'Could not load the payment options. Please check your connection and try again.';
+      });
+      return;
+    }
+
     setState(() {
       _paymentChannel = 'pawapay_online';
-      _paymentMethod = 'mom';
+      _paymentMethod = _paymentProvider?.method ?? 'mom';
     });
     // If the user is logged in, reuse their account name instead of asking
     // again in the payment modal. Fetch this in the background so it never
@@ -3075,217 +3352,672 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
     String nameError = '';
     String phoneError = '';
+    int step = 0; // 0 = choose the payment option, 1 = enter the number
 
     return StatefulBuilder(
       builder: (context, setModalState) {
+        final country = _paymentCountry;
+        final provider = _paymentProvider;
+
+        if (_paymentOptions == null || country == null) {
+          return KatishaModal(
+            title: l10n.translate('pay_online'),
+            subtitle: l10n.translate('pay_online_desc'),
+            closeLabel: l10n.translate('close'),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxl),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_loadingPaymentOptions)
+                    const SizedBox(
+                      width: 26,
+                      height: 26,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: AppColors.primary,
+                      ),
+                    )
+                  else
+                    const Icon(
+                      Icons.wifi_off_rounded,
+                      size: 32,
+                      color: AppColors.textMuted,
+                    ),
+                  const SizedBox(height: AppSpacing.md),
+                  Text(
+                    _paymentOptionsError ?? 'Loading payment options…',
+                    textAlign: TextAlign.center,
+                    style: AppTypography.bodySmall.copyWith(
+                      color: AppColors.textSub,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        final currency = provider?.currency ?? country.currency;
+        final localTotal = _localAmount(onlineTotal);
+        final prefix = country.prefix.isEmpty ? '250' : country.prefix;
+
+        void goToStep(int next) {
+          setModalState(() {
+            nameError = '';
+            phoneError = '';
+            step = next;
+          });
+        }
+
         return KatishaModal(
-          title: l10n.translate('pay_online'),
-          subtitle: l10n.translate('pay_online_desc'),
+          title: step == 0
+              ? 'Choose payment option'
+              : l10n.translate('pay_online'),
+          subtitle: step == 0
+              ? 'Available in ${country.name} through pawaPay'
+              : '${provider?.name ?? ''} · ${country.name}',
           closeLabel: l10n.translate('close'),
           bodyScrollable: false,
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Breathing room below the sheet header so the summary card
-                // doesn't sit flush against the divider.
                 const SizedBox(height: AppSpacing.lg),
-                // Pricing breakdown
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                  ),
-                  child: Column(
-                    children: [
-                      _buildSummaryRow(
-                        l10n.translate('total'),
-                        '${_formatAmount(onlineTotal)} RWF',
-                        isBold: true,
-                      ),
-                    ],
-                  ),
+                _buildPaymentAmountCard(
+                  totalRwf: onlineTotal,
+                  localTotal: localTotal,
+                  currency: currency,
                 ),
                 const SizedBox(height: AppSpacing.lg),
-
-                if (!_isLoggedIn) ...[
-                  _buildLabel(l10n.translate('your_name')),
+                if (step == 0) ...[
+                  _buildLabel('Country'),
                   const SizedBox(height: AppSpacing.sm),
-                  TextFormField(
-                    controller: _guestNameController,
-                    style: AppTypography.bodyLarge,
-                    decoration: InputDecoration(
-                      hintText: 'Enter your full name',
-                      hintStyle: AppTypography.bodyMedium.copyWith(
-                        color: AppColors.textMuted,
-                      ),
-                      prefixIcon: const Icon(Icons.person_outline, size: 20),
-                      filled: true,
-                      fillColor: AppColors.white,
-                      errorText: nameError.isEmpty ? null : nameError,
-                      errorMaxLines: 2,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(
-                          AppSpacing.radiusMd,
-                        ),
-                        borderSide: BorderSide(
-                          color: nameError.isEmpty
-                              ? AppColors.border
-                              : AppColors.error,
-                        ),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(
-                          AppSpacing.radiusMd,
-                        ),
-                        borderSide: BorderSide(
-                          color: nameError.isEmpty
-                              ? AppColors.border
-                              : AppColors.error,
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(
-                          AppSpacing.radiusMd,
-                        ),
-                        borderSide: const BorderSide(
-                          color: AppColors.primary,
-                          width: 2,
-                        ),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: AppSpacing.md,
-                        vertical: AppSpacing.md,
-                      ),
-                    ),
+                  _buildCountrySelector(
+                    country: country,
+                    onTap: () => _pickPaymentCountry(setModalState),
                   ),
                   const SizedBox(height: AppSpacing.lg),
-                ],
-
-                _buildLabel(l10n.translate('payment_phone_label')),
-                const SizedBox(height: AppSpacing.sm),
-                TextFormField(
-                  controller: _phoneController,
-                  keyboardType: TextInputType.phone,
-                  maxLength: 12,
-                  style: AppTypography.bodyLarge,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: InputDecoration(
-                    hintText: '07X XXX XXXX or 2507XXXXXXXX',
-                    hintStyle: AppTypography.bodyMedium.copyWith(
-                      color: AppColors.textMuted,
-                    ),
-                    prefixIcon: const Icon(Icons.phone_outlined, size: 20),
-                    filled: true,
-                    fillColor: AppColors.white,
-                    errorText: phoneError.isEmpty ? null : phoneError,
-                    errorMaxLines: 2,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                      borderSide: BorderSide(
-                        color: phoneError.isEmpty
-                            ? AppColors.border
-                            : AppColors.error,
+                  _buildLabel('Payment option'),
+                  const SizedBox(height: AppSpacing.sm),
+                  if (country.providers.isEmpty)
+                    Text(
+                      'No mobile money option is available in ${country.name} right now. Please choose another country.',
+                      style: AppTypography.bodySmall.copyWith(
+                        color: AppColors.textSub,
                       ),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                      borderSide: BorderSide(
-                        color: phoneError.isEmpty
-                            ? AppColors.border
-                            : AppColors.error,
+                    )
+                  else
+                    for (final option in country.providers)
+                      _buildProviderTile(
+                        option,
+                        selected: provider?.provider == option.provider,
+                        onTap: () {
+                          _selectPaymentProvider(option);
+                          setModalState(() {});
+                        },
                       ),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                      borderSide: const BorderSide(
-                        color: AppColors.primary,
-                        width: 2,
-                      ),
-                    ),
-                    counterText: '',
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: AppSpacing.md,
-                      vertical: AppSpacing.md,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                Text(
-                  l10n.translate('account_auto_created'),
-                  style: AppTypography.bodySmall.copyWith(
-                    color: AppColors.textMuted,
-                    fontSize: 12,
-                  ),
-                ),
-                const SizedBox(height: AppSpacing.lg),
-                // Pay button directly after the last input rather than pinned in
-                // the sheet footer, so it stays next to the form on tall screens
-                // and is never stranded at the bottom of the panel.
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: _isSubmitting
-                        ? null
-                        : () {
-                            final nameOk =
-                                _guestNameController.text.trim().isNotEmpty ||
-                                _isLoggedIn;
-                            final digits = _phoneController.text.replaceAll(
-                              RegExp(r'[^0-9]'),
-                              '',
-                            );
-                            setModalState(() {
-                              nameError = nameOk
-                                  ? ''
-                                  : l10n.translate('please_enter_name');
-                              phoneError = digits.length >= 9
-                                  ? ''
-                                  : 'Please enter a valid payment phone number';
-                            });
-                            if (nameOk && digits.length >= 9) {
+                  const SizedBox(height: AppSpacing.lg),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: provider == null
+                          ? null
+                          : () {
                               ref.read(soundServiceProvider).vibrate();
-                              Navigator.of(context).pop();
-                              _submitBooking();
-                            }
-                          },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: AppColors.white,
-                      disabledBackgroundColor: AppColors.textMuted,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(
-                          AppSpacing.radiusMd,
-                        ),
-                      ),
-                      elevation: 0,
-                    ),
-                    child: _isSubmitting
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: AppColors.white,
-                            ),
-                          )
-                        : Text(
-                            'Pay ${_formatAmount(onlineTotal)} RWF',
+                              goToStep(1);
+                            },
+                      style: _paymentModalButtonStyle(),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Continue',
                             style: AppTypography.titleMedium.copyWith(
                               color: AppColors.white,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
+                          const SizedBox(width: AppSpacing.xs),
+                          const Icon(
+                            Icons.arrow_forward,
+                            size: 16,
+                            color: AppColors.white,
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
+                ] else ...[
+                  _buildSelectedPaymentOption(
+                    country: country,
+                    provider: provider,
+                    onChange: () => goToStep(0),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  if (!_isLoggedIn) ...[
+                    _buildLabel(l10n.translate('your_name')),
+                    const SizedBox(height: AppSpacing.sm),
+                    TextFormField(
+                      controller: _guestNameController,
+                      style: AppTypography.bodyLarge,
+                      decoration: _paymentInputDecoration(
+                        hint: 'Enter your full name',
+                        prefixIcon: const Icon(Icons.person_outline, size: 20),
+                        errorText: nameError,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.lg),
+                  ],
+                  _buildLabel(l10n.translate('payment_phone_label')),
+                  const SizedBox(height: AppSpacing.sm),
+                  TextFormField(
+                    controller: _phoneController,
+                    keyboardType: TextInputType.phone,
+                    maxLength: 15,
+                    style: AppTypography.bodyLarge,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: _paymentInputDecoration(
+                      hint: '$prefix 7XX XXX XXX',
+                      prefixText: '+$prefix ',
+                      prefixStyle: AppTypography.bodyLarge.copyWith(
+                        color: AppColors.textSub,
+                      ),
+                      prefixIcon: const Icon(Icons.phone_outlined, size: 20),
+                      errorText: phoneError,
+                      counterText: '',
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    l10n.translate('account_auto_created'),
+                    style: AppTypography.bodySmall.copyWith(
+                      color: AppColors.textMuted,
+                      fontSize: 12,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _isSubmitting
+                          ? null
+                          : () {
+                              final nameOk =
+                                  _guestNameController.text.trim().isNotEmpty ||
+                                  _isLoggedIn;
+                              final digits = _phoneController.text.replaceAll(
+                                RegExp(r'[^0-9]'),
+                                '',
+                              );
+                              final localDigits = digits.startsWith(prefix)
+                                  ? digits.substring(prefix.length)
+                                  : digits;
+                              setModalState(() {
+                                nameError = nameOk
+                                    ? ''
+                                    : l10n.translate('please_enter_name');
+                                phoneError = localDigits.length >= 8
+                                    ? ''
+                                    : 'Please enter a valid payment phone number';
+                              });
+                              if (nameOk && localDigits.length >= 8) {
+                                ref.read(soundServiceProvider).vibrate();
+                                Navigator.of(context).pop();
+                                _submitBooking();
+                              }
+                            },
+                      style: _paymentModalButtonStyle(),
+                      child: _isSubmitting
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.white,
+                              ),
+                            )
+                          : Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'Pay ${_formatAmount(localTotal)} $currency',
+                                  style: AppTypography.titleMedium.copyWith(
+                                    color: AppColors.white,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                if (currency != 'RWF')
+                                  Text(
+                                    '≈ ${_formatAmount(onlineTotal)} RWF',
+                                    style: AppTypography.labelSmall.copyWith(
+                                      color: Colors.white70,
+                                    ),
+                                  ),
+                              ],
+                            ),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Center(
+                    child: Text(
+                      'You will receive a prompt on your phone to approve the payment.',
+                      textAlign: TextAlign.center,
+                      style: AppTypography.labelSmall.copyWith(
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: AppSpacing.md),
               ],
             ),
           ),
         );
       },
+    );
+  }
+
+  Widget _buildPaymentAmountCard({
+    required int totalRwf,
+    required int localTotal,
+    required String currency,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        children: [
+          Text(
+            '${_formatAmount(localTotal)} $currency',
+            style: AppTypography.headlineMedium.copyWith(
+              color: AppColors.primary,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          if (currency != 'RWF')
+            Padding(
+              padding: const EdgeInsets.only(top: 3),
+              child: Text(
+                '≈ ${_formatAmount(totalRwf)} RWF',
+                style: AppTypography.bodySmall.copyWith(
+                  color: AppColors.textMuted,
+                ),
+              ),
+            ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            '$_seatCount ${_seatCount == 1 ? 'seat' : 'seats'}  •  '
+            '${_selectedRoute?.origin ?? ''} → ${_selectedRoute?.destination ?? ''}',
+            textAlign: TextAlign.center,
+            style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCountrySelector({
+    required PaymentCountryOption country,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: AppColors.white,
+      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: 12,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: [
+              Text(country.flagEmoji, style: const TextStyle(fontSize: 22)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      country.name,
+                      style: AppTypography.labelLarge.copyWith(
+                        color: AppColors.text,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      '${country.currency} · '
+                      '${country.providers.length} payment '
+                      '${country.providers.length == 1 ? 'option' : 'options'}',
+                      style: AppTypography.bodySmall.copyWith(
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.expand_more_rounded,
+                size: 20,
+                color: AppColors.textSub,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProviderTile(
+    PaymentProviderOption option, {
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
+    final logo = option.logo;
+    final fallback = Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        color: AppColors.primaryLight,
+        borderRadius: BorderRadius.circular(9),
+      ),
+      child: const Icon(
+        Icons.phone_android_rounded,
+        size: 18,
+        color: AppColors.primary,
+      ),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: Material(
+        color: selected
+            ? AppColors.primaryLight.withValues(alpha: 0.35)
+            : AppColors.white,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+              border: Border.all(
+                color: selected ? AppColors.primary : AppColors.border,
+                width: selected ? 1.6 : 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(9),
+                  child: logo == null
+                      ? fallback
+                      : CachedNetworkImage(
+                          imageUrl: logo,
+                          width: 36,
+                          height: 36,
+                          fit: BoxFit.contain,
+                          memCacheWidth: 120,
+                          placeholder: (_, _) => fallback,
+                          errorWidget: (_, _, _) => fallback,
+                        ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        option.name,
+                        style: AppTypography.labelLarge.copyWith(
+                          color: AppColors.text,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 1),
+                      Text(
+                        '${option.currency} · '
+                        '${_paymentMethodLabel(option.method)}',
+                        style: AppTypography.bodySmall.copyWith(
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  selected
+                      ? Icons.check_circle_rounded
+                      : Icons.radio_button_unchecked_rounded,
+                  size: 22,
+                  color: selected ? AppColors.primary : AppColors.textMuted,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelectedPaymentOption({
+    required PaymentCountryOption country,
+    required PaymentProviderOption? provider,
+    required VoidCallback onChange,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+      ),
+      child: Row(
+        children: [
+          Text(country.flagEmoji, style: const TextStyle(fontSize: 20)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  provider?.name ?? 'Payment option',
+                  style: AppTypography.labelLarge.copyWith(
+                    color: AppColors.text,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                Text(
+                  country.name,
+                  style: AppTypography.bodySmall.copyWith(
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: onChange,
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.primary,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 36),
+            ),
+            child: Text(
+              'Change',
+              style: AppTypography.labelMedium.copyWith(
+                color: AppColors.primary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickPaymentCountry(StateSetter setModalState) async {
+    final options = _paymentOptions;
+    if (options == null) return;
+
+    final selected = await showModalBottomSheet<PaymentCountryOption>(
+      context: context,
+      backgroundColor: AppColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppSpacing.radiusXl),
+        ),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.md,
+                  AppSpacing.md,
+                  AppSpacing.md,
+                  AppSpacing.sm,
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Select your country',
+                        style: AppTypography.titleMedium.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      icon: const Icon(Icons.close_rounded, size: 20),
+                    ),
+                  ],
+                ),
+              ),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: options.countries.length,
+                  itemBuilder: (_, index) {
+                    final country = options.countries[index];
+                    final active = country.code == _paymentCountry?.code;
+                    return ListTile(
+                      leading: Text(
+                        country.flagEmoji,
+                        style: const TextStyle(fontSize: 22),
+                      ),
+                      title: Text(
+                        country.name,
+                        style: AppTypography.bodyMedium.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      subtitle: Text(
+                        '${country.currency} · ${country.providers.length} '
+                        '${country.providers.length == 1 ? 'option' : 'options'}',
+                        style: AppTypography.bodySmall.copyWith(
+                          color: AppColors.textMuted,
+                        ),
+                      ),
+                      trailing: active
+                          ? const Icon(
+                              Icons.check_circle_rounded,
+                              color: AppColors.primary,
+                              size: 20,
+                            )
+                          : null,
+                      onTap: () => Navigator.pop(ctx, country),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (selected == null || !mounted) return;
+    _selectPaymentCountry(selected);
+    setModalState(() {});
+  }
+
+  String _paymentMethodLabel(String method) {
+    return switch (method) {
+      'mom' => 'MTN Mobile Money',
+      'airtel' => 'Airtel Money',
+      'mpesa' => 'M-PESA',
+      'orange' => 'Orange Money',
+      'moov' => 'Moov Money',
+      'vodacom' => 'Vodacom M-PESA',
+      'tigo' => 'Mixx by Yas',
+      'halotel' => 'Halotel',
+      'zamtel' => 'Zamtel',
+      'tnm' => 'TNM Mpamba',
+      'vodafone' => 'Telecel Cash',
+      'free' => 'Free Money',
+      'wave' => 'Wave',
+      _ => 'Mobile money',
+    };
+  }
+
+  InputDecoration _paymentInputDecoration({
+    required String hint,
+    Icon? prefixIcon,
+    String? prefixText,
+    TextStyle? prefixStyle,
+    String? errorText,
+    String? counterText,
+  }) {
+    final hasError = errorText != null && errorText.isNotEmpty;
+    OutlineInputBorder border(Color color, [double width = 1]) {
+      return OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+        borderSide: BorderSide(color: color, width: width),
+      );
+    }
+
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
+      prefixIcon: prefixIcon,
+      prefixText: prefixText,
+      prefixStyle: prefixStyle,
+      filled: true,
+      fillColor: AppColors.white,
+      errorText: hasError ? errorText : null,
+      errorMaxLines: 2,
+      counterText: counterText,
+      border: border(hasError ? AppColors.error : AppColors.border),
+      enabledBorder: border(hasError ? AppColors.error : AppColors.border),
+      focusedBorder: border(AppColors.primary, 2),
+    );
+  }
+
+  ButtonStyle _paymentModalButtonStyle() {
+    return ElevatedButton.styleFrom(
+      backgroundColor: AppColors.primary,
+      foregroundColor: AppColors.white,
+      disabledBackgroundColor: AppColors.textMuted,
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+      ),
+      elevation: 0,
     );
   }
 
@@ -3731,7 +4463,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     const SizedBox(height: AppSpacing.xs),
 
                     Text(
-                      '${l10n.translate('amount')}: ${_formatAmount(totalAmount)} RWF',
+                      '${l10n.translate('amount')}: '
+                      '${_formatAmount(_localAmount(totalAmount))} '
+                      '$_paymentCurrency'
+                      '${_paymentCurrency != 'RWF' ? ' (${_formatAmount(totalAmount)} RWF)' : ''}',
                       style: AppTypography.bodySmall.copyWith(
                         color: AppColors.textMuted,
                       ),
@@ -3886,12 +4621,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   String _normalizePhone(String input) {
+    final prefix = _paymentCountry?.prefix.isNotEmpty == true
+        ? _paymentCountry!.prefix
+        : '250';
     var digits = input.replaceAll(RegExp(r'[^0-9]'), '');
-    if (digits.startsWith('250')) {
-      digits = digits.substring(3);
-    } else if (digits.startsWith('0')) {
-      digits = digits.substring(1);
-    }
-    return '+250$digits';
+    if (digits.startsWith(prefix)) return '+$digits';
+    if (digits.startsWith('0')) digits = digits.substring(1);
+    return '+$prefix$digits';
   }
 }

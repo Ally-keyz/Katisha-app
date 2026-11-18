@@ -97,6 +97,8 @@ class _NoOpNotificationService implements NotificationService {
   @override
   Future<bool> requestPermission() async => false;
   @override
+  Future<bool?> notificationsEnabled() async => null;
+  @override
   Future<void> scheduleJourneyAlert({
     required String bookingId,
     required String routeName,
@@ -116,6 +118,7 @@ class _NoOpNotificationService implements NotificationService {
     required String body,
     required String type,
     String? entityId,
+    bool alarm = false,
   }) async {}
   @override
   Future<void> handleSnooze(String bookingId) async {}

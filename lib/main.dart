@@ -197,6 +197,65 @@ class _KatishaAppState extends ConsumerState<KatishaApp> {
             body: body,
             type: 'new_booking',
             entityId: data['bookingId']?.toString(),
+            // A just-created booking is usually still unpaid, so it is shown as
+            // a normal alert. The alarm fires the moment it is paid (below).
+          ),
+        );
+        break;
+
+      case 'booking_paid':
+        // Only agents act on this: the passenger already has their ticket.
+        if (_session?.isAgent != true) return;
+        final reference = data['referenceCode']?.toString() ?? '';
+        final origin = data['origin']?.toString();
+        final destination = data['destination']?.toString();
+        unawaited(
+          notificationService.showImmediateAlert(
+            title: 'Booking paid${reference.isEmpty ? '' : ' · $reference'}',
+            body: origin != null && destination != null
+                ? '$origin → $destination · Issue the physical ticket and upload its photo.'
+                : 'A booking was paid. Issue the physical ticket and upload its photo.',
+            type: 'booking_paid',
+            entityId: data['bookingId']?.toString(),
+            alarm: true,
+          ),
+        );
+        break;
+
+      case 'agent_reminder':
+        // A booking has been ignored for a day: it was never confirmed as seen
+        // or its ticket photo was never uploaded.
+        if (_session?.isAgent != true) return;
+        final reference = data['referenceCode']?.toString() ?? '';
+        final message = data['message']?.toString();
+        unawaited(
+          notificationService.showImmediateAlert(
+            title: 'Booking needs attention${reference.isEmpty ? '' : ' · $reference'}',
+            body: message ??
+                'A booking has been waiting for your action for over 24 hours.',
+            type: 'agent_reminder',
+            entityId: data['bookingId']?.toString(),
+            alarm: true,
+          ),
+        );
+        break;
+
+      case 'booking_closed':
+        // The passenger cancelled or the agency rejected a booking the agent
+        // may have been preparing to issue.
+        if (_session?.isAgent != true) return;
+        final reference = data['referenceCode']?.toString() ?? '';
+        final cancelled = (data['status']?.toString().toLowerCase() ?? '') != 'rejected';
+        unawaited(
+          notificationService.showImmediateAlert(
+            title: cancelled
+                ? 'Booking cancelled${reference.isEmpty ? '' : ' · $reference'}'
+                : 'Booking rejected${reference.isEmpty ? '' : ' · $reference'}',
+            body: cancelled
+                ? 'The passenger cancelled this booking. Do not issue a ticket for it.'
+                : 'This booking was rejected. Do not issue a ticket for it.',
+            type: 'booking_closed',
+            entityId: data['bookingId']?.toString(),
           ),
         );
         break;
@@ -289,7 +348,10 @@ class _KatishaAppState extends ConsumerState<KatishaApp> {
         event.name == 'ticket_uploaded' ||
         event.name == 'booking_status' ||
         event.name == 'booking_ready' ||
-        event.name == 'booking_issued') {
+        event.name == 'booking_issued' ||
+        event.name == 'booking_paid' ||
+        event.name == 'booking_closed' ||
+        event.name == 'agent_reminder') {
       unawaited(ref.read(badgeCountsProvider.notifier).refresh());
     }
   }
@@ -320,6 +382,16 @@ class _KatishaAppState extends ConsumerState<KatishaApp> {
         if (entityId != null) router.push('/ticket/$entityId');
         break;
       case 'new_booking':
+      case 'booking_paid':
+      case 'agent_reminder':
+        // Open the exact booking so the agent can act immediately.
+        router.push(
+          entityId != null && entityId.isNotEmpty
+              ? '/agent?booking=$entityId'
+              : '/agent',
+        );
+        break;
+      case 'booking_closed':
         router.push('/agent');
         break;
       case 'ticket_uploaded':

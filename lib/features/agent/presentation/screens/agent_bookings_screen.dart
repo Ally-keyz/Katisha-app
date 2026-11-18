@@ -19,21 +19,83 @@ import '../../../../core/theme/app_typography.dart';
 import '../../../../core/widgets/katisha_app_bar.dart';
 import '../../../../shared/models/booking_model.dart';
 import '../../data/agent_repository.dart';
+import 'agent_settings_screen.dart';
 
 final _agentRepoProvider = Provider<AgentRepository>((ref) {
   return AgentRepository(ref.read(apiClientProvider));
 });
 
 final _dateFormat = DateFormat('EEE, d MMM yyyy');
+final _numericDateFormat = DateFormat('dd/MM/yyyy');
+final _shortDateFormat = DateFormat('d MMM');
 final _amountFormat = NumberFormat.decimalPattern();
+
+// ── Local design tokens ─────────────────────────────────────────────────────
+// Neutral, borderless surfaces. Structure comes from tone and spacing, not
+// outlines. Status is carried by a tinted pill rather than a fully coloured
+// card, so a long list stays calm and still scans quickly.
+const Color _kGray = Color(0xFFF3F4F6);
+const Color _kGrayStrong = Color(0xFFE5E7EB);
+
+const Color _kRed = Color(0xFFC62828);
+const Color _kRedCard = Color(0xFFFDECEC); // red version of the gray
+const Color _kRedPill = Color(0xFFF9D2D2);
+const Color _kOrange = Color(0xFFC2570C);
+const Color _kOrangeCard = Color(0xFFFFF1E2); // orange version of the gray
+const Color _kOrangePill = Color(0xFFFFDDB8);
+const Color _kTeal = Color(0xFF19D3B5);
+const Color _kGreen = Color(0xFF15803D);
+const Color _kGreenBg = Color(0xFFE6F6EC);
+const Color _kSlate = Color(0xFF475569);
+const Color _kSlateBg = Color(0xFFE5E7EB);
+
+const double _kCardRadius = 18;
+const double _kChipRadius = 14; // "rounded-xl"
+
+/// Card + pill colours per booking state.
+///  * not yet confirmed by the agent  -> red-tinted card
+///  * confirmed, ticket photo needed  -> orange-tinted card
+///  * ready (photo attached)          -> plain gray card
+///  * waiting on the passenger        -> plain gray card
+({Color card, Color pill, Color fg, String label}) _statusFor({
+  required bool ready,
+  required bool paid,
+  required bool seen,
+}) {
+  if (ready) {
+    return (card: _kGray, pill: _kGreenBg, fg: _kGreen, label: 'Ready');
+  }
+  if (!paid) {
+    return (
+      card: _kGray,
+      pill: AppColors.white,
+      fg: _kSlate,
+      label: 'Awaiting payment',
+    );
+  }
+  if (!seen) {
+    return (
+      card: _kRedCard,
+      pill: _kRedPill,
+      fg: _kRed,
+      label: 'Needs action',
+    );
+  }
+  return (
+    card: _kOrangeCard,
+    pill: _kOrangePill,
+    fg: _kOrange,
+    label: 'Photo needed',
+  );
+}
+const double _kControlRadius = 12;
 
 /// Field-agent portal: assigned-route bookings, the "I have seen it" step, and
 /// the mandatory photo of the physical ticket that makes a booking ready.
 ///
-/// The screen deliberately mirrors the passenger side of the app: the same
-/// [KatishaAppBar], typography, spacing and card vocabulary as the
-/// notifications list. Cards stay collapsed to a single summary row and expand
-/// in place when tapped, so the list reads calmly even with many bookings.
+/// Two tabs share one app bar: the booking feed and the agent's settings
+/// (password + notification permission). Tapping a booking opens a detail
+/// sheet with the actions for that booking.
 class AgentBookingsScreen extends ConsumerStatefulWidget {
   const AgentBookingsScreen({super.key});
 
@@ -45,15 +107,21 @@ class AgentBookingsScreen extends ConsumerStatefulWidget {
 class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
   final _picker = ImagePicker();
   final Set<String> _busy = <String>{};
-  final Set<String> _expanded = <String>{};
 
   List<Booking> _bookings = <Booking>[];
   bool _loading = true;
   bool _todayOnly = false;
   bool _attentionOnly = false;
+  int _tab = 0;
   String? _error;
   Timer? _reloadDebounce;
   StreamSubscription<SocketEvent>? _socketSub;
+
+  /// Booking opened from an alarm (`/agent?booking=<id>`). Held until the
+  /// feed has loaded, then presented as the detail sheet.
+  String? _pendingBookingId;
+  String? _handledDeepLinkId;
+  bool _openingPending = false;
 
   AgentRepository get _repo => ref.read(_agentRepoProvider);
 
@@ -90,9 +158,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     // without POST_NOTIFICATIONS (Android 13+) every alert is silently dropped.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      unawaited(
-        ref.read(notificationServiceProvider).requestPermission(),
-      );
+      unawaited(ref.read(notificationServiceProvider).requestPermission());
     });
   }
 
@@ -113,6 +179,9 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
         'booking_ready',
         'booking_issued',
         'booking_status',
+        'booking_paid',
+        'booking_closed',
+        'agent_reminder',
         'booking_rejected',
         'booking_cancelled',
         'ticket_uploaded',
@@ -157,8 +226,39 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
           _loading = false;
           _error = null;
         });
+        _openPendingBooking();
       },
     );
+  }
+
+  /// A push/alarm deep-links to `/agent?booking=<id>`. Remember the id, then
+  /// open that booking's detail sheet once the feed contains it.
+  void _captureDeepLinkBooking() {
+    final id =
+        GoRouterState.of(context).uri.queryParameters['booking'];
+    if (id == null || id.isEmpty || id == _handledDeepLinkId) return;
+    _pendingBookingId = id;
+  }
+
+  void _openPendingBooking() {
+    final id = _pendingBookingId;
+    if (id == null || _openingPending || _bookings.isEmpty) return;
+    if (_bookings.indexWhere((b) => b.id == id) < 0) {
+      _pendingBookingId = null;
+      _handledDeepLinkId = id;
+      return;
+    }
+    _pendingBookingId = null;
+    _handledDeepLinkId = id;
+    _openingPending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final index = _bookings.indexWhere((b) => b.id == id);
+      if (index >= 0) {
+        await _openBooking(_bookings[index]);
+      }
+      _openingPending = false;
+    });
   }
 
   bool _isRelevant(Booking booking) {
@@ -186,23 +286,29 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     return (a.travelTime ?? '').compareTo(b.travelTime ?? '');
   }
 
-  Future<void> _markSeen(Booking booking) async {
-    if (_busy.contains(booking.id)) return;
+  // ── Actions ───────────────────────────────────────────────────────────────
+
+  Future<Booking?> _markSeen(Booking booking) async {
+    if (_busy.contains(booking.id)) return null;
     setState(() => _busy.add(booking.id));
     final result = await _repo.markSeen(booking.id);
-    if (!mounted) return;
+    if (!mounted) return null;
     setState(() => _busy.remove(booking.id));
-    result.fold(
-      (failure) => _showSnack(failure.message, isError: true),
+    return result.fold(
+      (failure) {
+        _showSnack(failure.message, isError: true);
+        return null;
+      },
       (updated) {
         _replaceBooking(updated);
         _showSnack('Booking confirmed. Capture the ticket photo next.');
+        return updated;
       },
     );
   }
 
-  Future<void> _captureAndMarkReady(Booking booking) async {
-    if (_busy.contains(booking.id)) return;
+  Future<Booking?> _captureAndMarkReady(Booking booking) async {
+    if (_busy.contains(booking.id)) return null;
 
     XFile? shot;
     try {
@@ -219,14 +325,14 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
           isError: true,
         );
       }
-      return;
+      return null;
     }
-    if (shot == null) return;
+    if (shot == null) return null;
 
     File photo = File(shot.path);
     while (mounted) {
       final choice = await _confirmPhoto(photo);
-      if (!mounted) return;
+      if (!mounted) return null;
       if (choice == 'retake') {
         await _deleteQuietly(photo);
         try {
@@ -236,17 +342,17 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
             imageQuality: 70,
             maxWidth: 1600,
           );
-          if (retake == null) return;
+          if (retake == null) return null;
           photo = File(retake.path);
           continue;
         } catch (_) {
           _showSnack('Could not reopen the camera.', isError: true);
-          return;
+          return null;
         }
       }
       if (choice != 'use') {
         await _deleteQuietly(photo);
-        return;
+        return null;
       }
       break;
     }
@@ -254,73 +360,148 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     setState(() => _busy.add(booking.id));
     final result = await _repo.markReady(booking.id, photo);
     await _deleteQuietly(photo);
-    if (!mounted) return;
+    if (!mounted) return null;
     setState(() => _busy.remove(booking.id));
-    result.fold(
-      (failure) => _showSnack(failure.message, isError: true),
+    return result.fold(
+      (failure) {
+        _showSnack(failure.message, isError: true);
+        return null;
+      },
       (updated) {
         _replaceBooking(updated);
         _showSnack('Ticket marked ready. The passenger has been notified.');
+        return updated;
       },
     );
   }
 
+  /// Post-capture review, laid out on the wireframe: a square-ish white modal
+  /// with centered content and a flush, full-width Cancel / Continue bar.
   Future<String?> _confirmPhoto(File photo) {
     return showDialog<String>(
       context: context,
       barrierDismissible: false,
+      barrierColor: AppColors.text.withValues(alpha: 0.55),
       builder: (ctx) {
-        final width = MediaQuery.of(ctx).size.width;
-        return AlertDialog(
-          backgroundColor: AppColors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
-          ),
-          title: Text('Ticket photo', style: AppTypography.titleMedium),
-          content: SizedBox(
-            width: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                  child: Image.file(
-                    photo,
-                    height: 240,
-                    width: double.infinity,
-                    fit: BoxFit.cover,
-                    cacheWidth: (width * 1.2).round(),
+        final media = MediaQuery.of(ctx);
+        final imageHeight = (media.size.height * 0.40)
+            .clamp(180.0, 360.0)
+            .toDouble();
+
+        Widget action(String label, Color bg, Color fg, String result) {
+          return Expanded(
+            child: Material(
+              color: bg,
+              child: InkWell(
+                onTap: () => Navigator.pop(ctx, result),
+                child: SizedBox(
+                  height: 58,
+                  child: Center(
+                    child: Text(
+                      label,
+                      style: AppTypography.buttonMedium.copyWith(
+                        color: fg,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(height: AppSpacing.md),
-                Text(
-                  'Make sure the ticket number and passenger name are readable. '
-                  'This photo is the proof sent to the passenger.',
-                  style: AppTypography.bodySmall.copyWith(
-                    color: AppColors.textSub,
-                    height: 1.45,
+              ),
+            ),
+          );
+        }
+
+        return Dialog(
+          backgroundColor: AppColors.white,
+          surfaceTintColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 24,
+            vertical: 24,
+          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          clipBehavior: Clip.antiAlias,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: 420,
+              maxHeight: media.size.height * 0.86,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+                      child: Column(
+                        children: [
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Container(
+                              width: double.infinity,
+                              height: imageHeight,
+                              color: _kGray,
+                              child: Image.file(
+                                photo,
+                                fit: BoxFit.contain,
+                                cacheWidth: (media.size.width * 1.4).round(),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 22),
+                          Text(
+                            'Review ticket photo',
+                            textAlign: TextAlign.center,
+                            style: AppTypography.titleSmall.copyWith(
+                              color: AppColors.text,
+                              fontWeight: FontWeight.w700,
+                              letterSpacing: -0.2,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Make sure the ticket number and passenger name '
+                            'are readable. This photo is the proof sent to the '
+                            'passenger.',
+                            textAlign: TextAlign.center,
+                            style: AppTypography.bodySmall.copyWith(
+                              color: AppColors.textSub,
+                              height: 1.5,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          TextButton.icon(
+                            onPressed: () => Navigator.pop(ctx, 'retake'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: AppColors.primary,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 8,
+                              ),
+                              textStyle: AppTypography.labelMedium.copyWith(
+                                color: AppColors.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            icon: const Icon(Icons.refresh_rounded, size: 16),
+                            label: const Text('Retake photo'),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
+                ),
+
+                // Flush, full-width action bar.
+                Row(
+                  children: [
+                    action('Cancel', AppColors.primary, AppColors.white,
+                        'cancel'),
+                    action('Continue', _kTeal, AppColors.text, 'use'),
+                  ],
                 ),
               ],
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, 'retake'),
-              child: Text(
-                'Retake',
-                style: AppTypography.labelLarge.copyWith(
-                  color: AppColors.textSub,
-                ),
-              ),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, 'use'),
-              style: _primaryButtonStyle(),
-              child: const Text('Use photo'),
-            ),
-          ],
         );
       },
     );
@@ -365,13 +546,21 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Text(
+          'Log out?',
+          style: AppTypography.titleMedium.copyWith(
+            fontWeight: FontWeight.w700,
+            letterSpacing: -0.3,
+          ),
         ),
-        title: Text('Log out?', style: AppTypography.titleMedium),
         content: Text(
           'You will need to sign in again to see your assigned bookings.',
-          style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
+          style: AppTypography.bodySmall.copyWith(
+            color: AppColors.textSub,
+            height: 1.5,
+          ),
         ),
         actions: [
           TextButton(
@@ -388,8 +577,9 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
             style: FilledButton.styleFrom(
               backgroundColor: AppColors.error,
               foregroundColor: AppColors.white,
+              elevation: 0,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(_kControlRadius),
               ),
               textStyle: AppTypography.buttonMedium,
             ),
@@ -404,58 +594,84 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     context.go('/login');
   }
 
+  // ── Shell ─────────────────────────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
+    final settingsTab = _tab == 1;
+    // An alarm tap can carry a booking id; open it as soon as it is available.
+    _captureDeepLinkBooking();
+    if (!_loading) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _openPendingBooking();
+      });
+    }
+
     return Scaffold(
       backgroundColor: AppColors.white,
       appBar: KatishaAppBar(
-        title: 'Agent Portal',
+        title: settingsTab ? 'Settings' : 'Agent Portal',
+        showLottie: false,
         showBell: false,
         extraActions: [
-          _buildAttentionAction(),
+          if (!settingsTab) _buildAttentionAction(),
           IconButton(
-            tooltip: 'Refresh',
-            onPressed: () => _load(),
-            icon: const Icon(
-              Icons.refresh_rounded,
-              color: AppColors.textSub,
-            ),
-          ),
-          PopupMenuButton<String>(
-            tooltip: 'More',
-            icon: const Icon(Icons.more_vert_rounded, color: AppColors.textSub),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-            ),
-            onSelected: (value) {
-              if (value == 'logout') _logout();
-            },
-            itemBuilder: (_) => [
-              PopupMenuItem(
-                value: 'logout',
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.logout_rounded,
-                      size: 18,
-                      color: AppColors.error,
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Text(
-                      'Log out',
-                      style: AppTypography.labelLarge.copyWith(
-                        color: AppColors.error,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+            tooltip: 'Log out',
+            onPressed: _logout,
+            icon: const Icon(Icons.logout_rounded, color: AppColors.textSub),
           ),
           const SizedBox(width: 4),
         ],
       ),
-      body: _buildBody(),
+      body: IndexedStack(
+        index: _tab,
+        children: [
+          _buildBody(),
+          AgentSettingsView(onLogout: _logout),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tab,
+        onDestinationSelected: (index) => setState(() => _tab = index),
+        backgroundColor: AppColors.white,
+        elevation: 0,
+        height: 68,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        indicatorColor: _kGray,
+        indicatorShape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+        ),
+        surfaceTintColor: Colors.transparent,
+        destinations: [
+          NavigationDestination(
+            icon: _bookingsTabIcon(
+              const Icon(Icons.confirmation_num_outlined),
+              selected: false,
+            ),
+            selectedIcon: _bookingsTabIcon(
+              const Icon(Icons.confirmation_num),
+              selected: true,
+            ),
+            label: 'Bookings',
+          ),
+          const NavigationDestination(
+            icon: Icon(Icons.settings_outlined),
+            selectedIcon: Icon(Icons.settings),
+            label: 'Settings',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bookingsTabIcon(Widget icon, {required bool selected}) {
+    final count = _attentionCount;
+    if (count == 0) return icon;
+    return Badge(
+      backgroundColor: AppColors.error,
+      textColor: AppColors.white,
+      label: Text(count > 9 ? '9+' : '$count'),
+      child: icon,
     );
   }
 
@@ -482,8 +698,8 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
             color: count > 0
                 ? AppColors.error
                 : active
-                    ? AppColors.primary
-                    : AppColors.textMuted,
+                ? AppColors.primary
+                : AppColors.textMuted,
           ),
         ),
         if (count > 0)
@@ -530,7 +746,8 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
 
     return Column(
       children: [
-        _buildFilters(),
+        _buildGreeting(),
+        _buildFilters(bookings.length),
         if (_attentionOnly && _attentionCount > 0) _buildAttentionBanner(),
         Expanded(
           child: RefreshIndicator(
@@ -538,7 +755,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
             onRefresh: () => _load(silent: true),
             child: ListView.builder(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
               itemCount: bookings.isEmpty ? 1 : bookings.length,
               itemBuilder: (context, index) {
                 if (bookings.isEmpty) return _buildEmptyState();
@@ -551,9 +768,91 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     );
   }
 
-  Widget _buildFilters() {
+  String _greetingForNow() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'Good morning';
+    if (hour < 18) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  Widget _buildGreeting() {
+    final user = ref.watch(sessionProvider);
+    final rawName = (user?.name.trim().isNotEmpty ?? false)
+        ? user!.name.trim()
+        : (user?.username.trim().isNotEmpty == true
+              ? user!.username.trim()
+              : 'Agent');
+    final firstName = rawName.split(RegExp(r'\s+')).first;
+    final initials = rawName
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .map((part) => part.characters.first.toUpperCase())
+        .join();
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 8, 20, 4),
+      padding: const EdgeInsets.fromLTRB(20, 6, 20, 14),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: const BoxDecoration(
+              color: _kGray,
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              initials.isEmpty ? 'A' : initials,
+              style: AppTypography.titleSmall.copyWith(
+                color: AppColors.text,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _greetingForNow(),
+                  style: AppTypography.bodySmall.copyWith(
+                    color: AppColors.textMuted,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  firstName,
+                  style: AppTypography.headlineSmall.copyWith(
+                    color: AppColors.text,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -0.4,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (user?.agencyName != null && user!.agencyName!.isNotEmpty)
+                  Text(
+                    user.agencyName!,
+                    style: AppTypography.bodySmall.copyWith(
+                      color: AppColors.textSub,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilters(int visibleCount) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 2, 20, 10),
       child: Row(
         children: [
           _filterChip('All bookings', !_todayOnly, () {
@@ -562,13 +861,20 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
               _load();
             }
           }),
-          const SizedBox(width: AppSpacing.sm),
-          _filterChip("Today's trips", _todayOnly, () {
+          const SizedBox(width: 8),
+          _filterChip('Today’s trips', _todayOnly, () {
             if (!_todayOnly) {
               setState(() => _todayOnly = true);
               _load();
             }
           }),
+          const Spacer(),
+          Text(
+            '$visibleCount ${visibleCount == 1 ? 'booking' : 'bookings'}',
+            style: AppTypography.labelSmall.copyWith(
+              color: AppColors.textMuted,
+            ),
+          ),
         ],
       ),
     );
@@ -577,21 +883,21 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
   Widget _filterChip(String label, bool selected, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
+      behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? AppColors.primary : AppColors.white,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
-          border: Border.all(
-            color: selected ? AppColors.primary : AppColors.border,
-          ),
+          color: selected ? AppColors.primary : _kGray,
+          borderRadius: BorderRadius.circular(_kChipRadius),
         ),
         child: Text(
           label,
           style: AppTypography.labelMedium.copyWith(
             color: selected ? AppColors.white : AppColors.textSub,
-            fontWeight: FontWeight.w600,
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),
@@ -602,16 +908,15 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     final count = _attentionCount;
     return Container(
       margin: const EdgeInsets.fromLTRB(20, 4, 20, 4),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: AppColors.errorBg,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-        border: Border.all(color: AppColors.errorBorder),
+        borderRadius: BorderRadius.circular(_kControlRadius),
       ),
       child: Row(
         children: [
           const Icon(Icons.flag_rounded, size: 16, color: AppColors.error),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
               '$count booking${count == 1 ? '' : 's'} need your attention',
@@ -626,8 +931,8 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
             child: Text(
               'Show all',
               style: AppTypography.labelMedium.copyWith(
-                color: AppColors.primary,
-                fontWeight: FontWeight.w600,
+                color: AppColors.text,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ),
@@ -637,84 +942,57 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
   }
 
   Widget _buildSkeleton() {
-    return ListView.builder(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(20, 56, 20, 24),
-      itemCount: 5,
-      itemBuilder: (_, _) => Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.border.withValues(alpha: 0.6)),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: const BoxDecoration(
-                color: AppColors.border,
-                shape: BoxShape.circle,
+    return Column(
+      children: [
+        _buildGreeting(),
+        Expanded(
+          child: ListView.builder(
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            itemCount: 5,
+            itemBuilder: (_, _) => Container(
+              height: 124,
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: _kGray,
+                borderRadius: BorderRadius.circular(_kCardRadius),
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    height: 13,
-                    width: 150,
-                    decoration: BoxDecoration(
-                      color: AppColors.border,
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    height: 11,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: AppColors.border.withValues(alpha: 0.6),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 
   Widget _buildEmptyState() {
     final attentionMode = _attentionOnly;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 72),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 64),
       child: Column(
         children: [
           Container(
-            width: 88,
-            height: 88,
-            decoration: BoxDecoration(
-              color: attentionMode ? AppColors.errorBg : AppColors.surfaceVariant,
+            width: 84,
+            height: 84,
+            decoration: const BoxDecoration(
+              color: _kGray,
               shape: BoxShape.circle,
             ),
             child: Icon(
               attentionMode
                   ? Icons.check_rounded
                   : Icons.confirmation_num_outlined,
-              size: 40,
-              color: attentionMode ? AppColors.error : AppColors.textMuted,
+              size: 36,
+              color: AppColors.textMuted,
             ),
           ),
           const SizedBox(height: 20),
           Text(
             attentionMode ? 'You are all caught up' : 'No bookings right now',
-            style: AppTypography.titleMedium.copyWith(color: AppColors.text),
+            style: AppTypography.titleMedium.copyWith(
+              color: AppColors.text,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.3,
+            ),
           ),
           const SizedBox(height: 6),
           Text(
@@ -748,14 +1026,17 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
               ),
               child: const Icon(
                 Icons.cloud_off_rounded,
-                size: 36,
+                size: 34,
                 color: AppColors.error,
               ),
             ),
             const SizedBox(height: AppSpacing.lg),
             Text(
               'Could not load your bookings',
-              style: AppTypography.titleMedium,
+              style: AppTypography.titleMedium.copyWith(
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.3,
+              ),
             ),
             const SizedBox(height: 6),
             Text(
@@ -769,7 +1050,19 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
             const SizedBox(height: AppSpacing.lg),
             FilledButton.icon(
               onPressed: () => _load(),
-              style: _primaryButtonStyle(),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: AppColors.white,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.lg,
+                  vertical: 14,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(_kControlRadius),
+                ),
+                textStyle: AppTypography.buttonMedium,
+              ),
               icon: const Icon(Icons.refresh_rounded, size: 18),
               label: const Text('Try again'),
             ),
@@ -782,485 +1075,180 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
   // ── Booking card ──────────────────────────────────────────────────────────
 
   Widget _buildBookingCard(Booking booking) {
-    final expanded = _expanded.contains(booking.id);
-    final needsAttention = _needsAttention(booking);
+    final style = _statusFor(
+      ready: _hasProof(booking),
+      paid: booking.paymentStatus == 'paid',
+      seen: booking.agentSeen,
+    );
     final date = booking.travelDate;
-    final dateLabel = date == null ? '—' : _dateFormat.format(date);
+    final dateLabel = date == null ? '\u2014' : _dateFormat.format(date);
     final time = booking.travelTime;
     final passenger = booking.passengerDetails.isNotEmpty
         ? booking.passengerDetails.first
         : null;
     final passengerName = passenger?.name.isNotEmpty == true
         ? passenger!.name
-        : 'Passenger';
+        : (booking.user?.name.isNotEmpty == true
+              ? booking.user!.name
+              : 'Passenger');
 
-    final subtitle = [
-      passengerName,
-      '$dateLabel${time != null && time.isNotEmpty ? ' · $time' : ''}',
-    ].join(' · ');
+    final seatsLabel = '${booking.seats} seat${booking.seats == 1 ? '' : 's'}';
+    final when = time != null && time.isNotEmpty
+        ? '$dateLabel \u00b7 $time'
+        : dateLabel;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: AppColors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: needsAttention ? AppColors.errorBorder : AppColors.border,
-        ),
-      ),
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          splashColor: AppColors.primary.withValues(alpha: 0.04),
-          highlightColor: AppColors.primary.withValues(alpha: 0.02),
-          onTap: () {
-            setState(() {
-              if (expanded) {
-                _expanded.remove(booking.id);
-              } else {
-                _expanded.add(booking.id);
-              }
-            });
-          },
-          child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _bookingAvatar(booking),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '${booking.origin} → ${booking.destination}',
-                            style: AppTypography.titleSmall.copyWith(
-                              color: AppColors.text,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            subtitle,
-                            style: AppTypography.bodySmall.copyWith(
-                              color: AppColors.textSub,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Semantics(
+        button: true,
+        hint: 'Opens booking details',
+        label:
+            '${style.label}. ${booking.origin} to ${booking.destination}. '
+            '$passengerName, $seatsLabel, $when',
+        child: Material(
+          color: style.card,
+          borderRadius: BorderRadius.circular(_kCardRadius),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: () => _openBooking(booking),
+            splashColor: style.fg.withValues(alpha: 0.08),
+            highlightColor: style.fg.withValues(alpha: 0.05),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 16, 14, 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _statusPill(booking),
-                        const SizedBox(height: 4),
-                        AnimatedRotation(
-                          turns: expanded ? 0.5 : 0,
-                          duration: const Duration(milliseconds: 200),
-                          curve: Curves.easeOutCubic,
-                          child: const Icon(
-                            Icons.expand_more_rounded,
-                            size: 18,
-                            color: AppColors.textMuted,
+                        Row(
+                          children: [
+                            _statusPill(style.label, style.fg, style.pill),
+                            const SizedBox(width: 10),
+                            Text(
+                              _relativeTime(booking.createdAt),
+                              style: AppTypography.labelSmall.copyWith(
+                                color: AppColors.textMuted,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          '${booking.origin} \u2192 ${booking.destination}',
+                          style: AppTypography.titleSmall.copyWith(
+                            color: AppColors.text,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16,
+                            letterSpacing: -0.2,
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '$passengerName \u00b7 $seatsLabel',
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.textSub,
+                            height: 1.4,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          when,
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.textMuted,
+                            height: 1.4,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
-                  ],
-                ),
-                AnimatedSize(
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOutCubic,
-                  alignment: Alignment.topCenter,
-                  child: expanded
-                      ? _buildExpandedDetails(
-                          booking,
-                          passenger: passenger,
-                          dateLabel: dateLabel,
-                          time: time,
-                          busy: _busy.contains(booking.id),
-                        )
-                      : const SizedBox(width: double.infinity),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _bookingAvatar(Booking booking) {
-    final ready = _hasProof(booking);
-    final unpaid = booking.paymentStatus != 'paid';
-    final (Color bg, Color fg, IconData icon) = ready
-        ? (const Color(0xFFDCFCE7), const Color(0xFF15803D),
-            Icons.check_circle_outline_rounded)
-        : unpaid
-            ? (AppColors.surfaceVariant, AppColors.textMuted,
-                Icons.hourglass_bottom_rounded)
-            : booking.agentSeen
-                ? (AppColors.warningBg, AppColors.warning,
-                    Icons.photo_camera_outlined)
-                : (AppColors.primaryLight, AppColors.primary,
-                    Icons.confirmation_number_outlined);
-
-    return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
-      child: Icon(icon, size: 20, color: fg),
-    );
-  }
-
-  Widget _statusPill(Booking booking) {
-    final (String label, Color fg, Color bg) = _hasProof(booking)
-        ? ('Ready', const Color(0xFF15803D), const Color(0xFFDCFCE7))
-        : booking.paymentStatus != 'paid'
-            ? ('Unpaid', AppColors.textSub, AppColors.surfaceVariant)
-            : ('Needs action', AppColors.error, AppColors.errorBg);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
-      ),
-      child: Text(
-        label,
-        style: AppTypography.labelSmall.copyWith(
-          color: fg,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildExpandedDetails(
-    Booking booking, {
-    required PassengerDetail? passenger,
-    required String dateLabel,
-    required String? time,
-    required bool busy,
-  }) {
-    final phone = passenger?.phone ?? booking.phone ?? booking.contactPhone;
-    final paid = booking.paymentStatus == 'paid';
-    final ready = _hasProof(booking);
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Divider(height: 1, color: AppColors.border),
-          const SizedBox(height: 8),
-          _detailRow(
-            Icons.confirmation_number_outlined,
-            'Reference',
-            booking.referenceCode,
-            mono: true,
-          ),
-          if (passenger != null && passenger.name.isNotEmpty)
-            _detailRow(Icons.person_outline_rounded, 'Passenger', passenger.name),
-          if (phone != null && phone.isNotEmpty)
-            _detailRow(Icons.call_outlined, 'Phone', phone),
-          _detailRow(
-            Icons.event_outlined,
-            'Travel',
-            '$dateLabel${time != null && time.isNotEmpty ? ' · $time' : ''}',
-          ),
-          _detailRow(
-            Icons.event_seat_outlined,
-            'Seats',
-            '${booking.seats} seat${booking.seats == 1 ? '' : 's'}'
-            '${booking.seatNumbers.isNotEmpty ? ' · ${booking.seatNumbers.join(', ')}' : ''}',
-          ),
-          if (booking.pickupPoint != null && booking.pickupPoint!.isNotEmpty)
-            _detailRow(
-              Icons.location_on_outlined,
-              'Pickup',
-              booking.pickupPoint!,
-            ),
-          if (booking.totalAmount > 0)
-            _detailRow(
-              Icons.payments_outlined,
-              'Total',
-              '${_amountFormat.format(booking.totalAmount)} RWF',
-            ),
-          _detailRow(
-            Icons.verified_outlined,
-            'Payment',
-            paid ? 'Paid' : 'Awaiting payment',
-            valueColor: paid ? const Color(0xFF15803D) : AppColors.warning,
-          ),
-          if (ready) ...[
-            const SizedBox(height: 6),
-            _buildProofRow(booking),
-          ],
-          const SizedBox(height: 12),
-          _buildActions(
-            booking,
-            busy: busy,
-            paid: paid,
-            ready: ready,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _detailRow(
-    IconData icon,
-    String label,
-    String value, {
-    Color? valueColor,
-    bool mono = false,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 15, color: AppColors.textMuted),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 78,
-            child: Text(
-              label,
-              style: AppTypography.bodySmall.copyWith(
-                color: AppColors.textMuted,
-              ),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              textAlign: TextAlign.end,
-              style: AppTypography.bodySmall.copyWith(
-                color: valueColor ?? AppColors.text,
-                fontWeight: FontWeight.w600,
-                fontFamily: mono ? 'monospace' : null,
-                letterSpacing: mono ? 0.3 : null,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildProofRow(Booking booking) {
-    final url = resolveMediaUrl(booking.ticketProofImage);
-    return GestureDetector(
-      onTap: () => _showProof(booking),
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Row(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: url == null
-                  ? Container(
-                      width: 44,
-                      height: 44,
-                      color: AppColors.primaryLight,
-                      child: const Icon(
-                        Icons.receipt_long_rounded,
-                        color: AppColors.primary,
-                        size: 20,
-                      ),
-                    )
-                  : CachedNetworkImage(
-                      imageUrl: url,
-                      width: 44,
-                      height: 44,
-                      fit: BoxFit.cover,
-                      memCacheWidth: 160,
-                      httpHeaders: _imageHeaders,
-                      placeholder: (_, _) => Container(
-                        width: 44,
-                        height: 44,
-                        color: AppColors.surfaceVariant,
-                      ),
-                      errorWidget: (_, _, _) => Container(
-                        width: 44,
-                        height: 44,
-                        color: AppColors.primaryLight,
-                        child: const Icon(
-                          Icons.image_not_supported_outlined,
-                          color: AppColors.primary,
-                          size: 18,
-                        ),
-                      ),
-                    ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Ticket photo attached',
-                    style: AppTypography.labelMedium.copyWith(
-                      color: AppColors.text,
-                      fontWeight: FontWeight.w600,
-                    ),
                   ),
-                  const SizedBox(height: 1),
-                  Text(
-                    'Tap to inspect the proof',
-                    style: AppTypography.bodySmall.copyWith(
-                      color: AppColors.textMuted,
-                      fontSize: 11,
+                  const SizedBox(width: 10),
+                  // Affordance: tells the agent the card opens / expands.
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: AppColors.white.withValues(alpha: 0.75),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.keyboard_arrow_down_rounded,
+                      size: 24,
+                      color: AppColors.textSub,
                     ),
                   ),
                 ],
               ),
             ),
-            const Icon(
-              Icons.chevron_right_rounded,
-              color: AppColors.textMuted,
-            ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildActions(
-    Booking booking, {
-    required bool busy,
-    required bool paid,
-    required bool ready,
-  }) {
-    if (busy) {
-      return const SizedBox(
-        height: 46,
-        child: Center(
-          child: SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.2,
-              color: AppColors.primary,
+  Widget _statusPill(String label, Color fg, Color bg) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(color: fg, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: AppTypography.labelSmall.copyWith(
+              color: fg,
+              fontWeight: FontWeight.w700,
             ),
           ),
-        ),
-      );
-    }
-
-    if (!paid) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-        ),
-        child: Row(
-          children: [
-            const Icon(
-              Icons.hourglass_top_rounded,
-              size: 16,
-              color: AppColors.textMuted,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Waiting for the passenger’s payment',
-                style: AppTypography.bodySmall.copyWith(
-                  color: AppColors.textSub,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    if (!booking.agentSeen) {
-      return SizedBox(
-        width: double.infinity,
-        child: FilledButton.icon(
-          onPressed: () => _markSeen(booking),
-          style: _primaryButtonStyle(),
-          icon: const Icon(Icons.visibility_rounded, size: 18),
-          label: const Text('Confirm I have seen this booking'),
-        ),
-      );
-    }
-
-    if (!ready) {
-      return SizedBox(
-        width: double.infinity,
-        child: FilledButton.icon(
-          onPressed: () => _captureAndMarkReady(booking),
-          style: _primaryButtonStyle(),
-          icon: const Icon(Icons.camera_alt_rounded, size: 18),
-          label: const Text('Mark ready & photograph ticket'),
-        ),
-      );
-    }
-
-    return Row(
-      children: [
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () => _showProof(booking),
-            style: _outlineButtonStyle(color: AppColors.primary),
-            icon: const Icon(Icons.photo_outlined, size: 17),
-            label: const Text('View proof'),
-          ),
-        ),
-        const SizedBox(width: AppSpacing.sm),
-        Expanded(
-          child: OutlinedButton.icon(
-            onPressed: () => _captureAndMarkReady(booking),
-            style: _outlineButtonStyle(color: AppColors.textSub),
-            icon: const Icon(Icons.camera_alt_outlined, size: 17),
-            label: const Text('Replace photo'),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
-  ButtonStyle _primaryButtonStyle() {
-    return FilledButton.styleFrom(
-      backgroundColor: AppColors.primary,
-      foregroundColor: AppColors.white,
-      minimumSize: const Size.fromHeight(46),
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
-      ),
-      textStyle: AppTypography.buttonMedium,
-    );
+  String _relativeTime(DateTime? createdAt) {
+    if (createdAt == null) return '';
+    final diff = DateTime.now().difference(createdAt);
+    if (diff.inMinutes < 1) return 'now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+    if (diff.inHours < 24) return '${diff.inHours}h';
+    if (diff.inDays < 7) {
+      return '${diff.inDays} day${diff.inDays == 1 ? '' : 's'}';
+    }
+    return _shortDateFormat.format(createdAt);
   }
 
-  ButtonStyle _outlineButtonStyle({required Color color}) {
-    return OutlinedButton.styleFrom(
-      foregroundColor: color,
-      side: const BorderSide(color: AppColors.border),
-      minimumSize: const Size.fromHeight(44),
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(10),
+  // ── Detail sheet ──────────────────────────────────────────────────────────
+
+  Future<void> _openBooking(Booking booking) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: AppColors.text.withValues(alpha: 0.45),
+      builder: (_) => _BookingDetailsSheet(
+        booking: booking,
+        onUpdated: _replaceBooking,
+        onMarkSeen: _markSeen,
+        onMarkReady: _captureAndMarkReady,
+        onViewProof: _showProof,
+        imageHeaders: _imageHeaders,
       ),
-      textStyle: AppTypography.buttonSmall.copyWith(color: color),
     );
   }
 
@@ -1271,31 +1259,36 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
       context: context,
       builder: (ctx) => Dialog(
         backgroundColor: AppColors.white,
+        surfaceTintColor: Colors.transparent,
         insetPadding: const EdgeInsets.all(AppSpacing.md),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppSpacing.radiusXl),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(
-                AppSpacing.md,
-                AppSpacing.sm,
-                AppSpacing.sm,
-                0,
-              ),
+              padding: const EdgeInsets.fromLTRB(20, 10, 10, 6),
               child: Row(
                 children: [
                   Expanded(
                     child: Text(
-                      'Ticket proof · ${booking.referenceCode}',
-                      style: AppTypography.titleSmall,
+                      'Ticket proof',
+                      style: AppTypography.titleSmall.copyWith(
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.2,
+                      ),
                     ),
                   ),
                   IconButton(
                     onPressed: () => Navigator.pop(ctx),
-                    icon: const Icon(Icons.close_rounded, size: 20),
+                    style: IconButton.styleFrom(
+                      backgroundColor: _kGray,
+                      minimumSize: const Size(36, 36),
+                    ),
+                    icon: const Icon(
+                      Icons.close_rounded,
+                      size: 18,
+                      color: AppColors.textSub,
+                    ),
                   ),
                 ],
               ),
@@ -1303,7 +1296,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
             Flexible(
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(
-                  bottom: Radius.circular(AppSpacing.radiusXl),
+                  bottom: Radius.circular(24),
                 ),
                 child: InteractiveViewer(
                   maxScale: 4,
@@ -1323,9 +1316,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
                     ),
                     errorWidget: (_, _, _) => const SizedBox(
                       height: 260,
-                      child: Center(
-                        child: Text('Could not load the photo'),
-                      ),
+                      child: Center(child: Text('Could not load the photo')),
                     ),
                   ),
                 ),
@@ -1334,6 +1325,845 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Shared button styles ────────────────────────────────────────────────────
+
+ButtonStyle _primaryButtonStyle({double height = 52}) {
+  return FilledButton.styleFrom(
+    backgroundColor: AppColors.primary,
+    foregroundColor: AppColors.white,
+    elevation: 0,
+    minimumSize: Size.fromHeight(height),
+    padding: const EdgeInsets.symmetric(vertical: 12),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(_kControlRadius),
+    ),
+    textStyle: AppTypography.buttonMedium,
+  );
+}
+
+ButtonStyle _grayButtonStyle({double height = 48, Color? foreground}) {
+  final fg = foreground ?? AppColors.text;
+  return FilledButton.styleFrom(
+    backgroundColor: _kGray,
+    foregroundColor: fg,
+    elevation: 0,
+    minimumSize: Size.fromHeight(height),
+    padding: const EdgeInsets.symmetric(vertical: 10),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(_kControlRadius),
+    ),
+    textStyle: AppTypography.buttonSmall.copyWith(color: fg),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Booking detail sheet
+// ---------------------------------------------------------------------------
+
+class _BookingDetailsSheet extends ConsumerStatefulWidget {
+  const _BookingDetailsSheet({
+    required this.booking,
+    required this.onUpdated,
+    required this.onMarkSeen,
+    required this.onMarkReady,
+    required this.onViewProof,
+    required this.imageHeaders,
+  });
+
+  final Booking booking;
+  final ValueChanged<Booking> onUpdated;
+  final Future<Booking?> Function(Booking) onMarkSeen;
+  final Future<Booking?> Function(Booking) onMarkReady;
+  final void Function(Booking) onViewProof;
+  final Map<String, String>? imageHeaders;
+
+  @override
+  ConsumerState<_BookingDetailsSheet> createState() =>
+      _BookingDetailsSheetState();
+}
+
+class _BookingDetailsSheetState extends ConsumerState<_BookingDetailsSheet> {
+  late Booking _booking = widget.booking;
+  bool _busy = false;
+
+  bool get _paid => _booking.paymentStatus == 'paid';
+  bool get _ready =>
+      _booking.ticketProofImage != null &&
+      _booking.ticketProofImage!.isNotEmpty;
+
+  bool get _waitingOnAgent => _paid && !_ready;
+
+  Future<void> _run(Future<Booking?> Function(Booking) action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final updated = await action(_booking);
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      if (updated != null) _booking = updated;
+    });
+    if (updated != null) widget.onUpdated(updated);
+  }
+
+  Future<void> _replaceOrRetake() => _run(widget.onMarkReady);
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final bottomInset = media.viewInsets.bottom;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Container(
+        constraints: BoxConstraints(maxHeight: media.size.height * 0.92),
+        clipBehavior: Clip.antiAlias,
+        decoration: const BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildHandle(),
+            _buildHeader(),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildTripCard(),
+                    const SizedBox(height: 28),
+                    _buildSectionTitle('Passenger'),
+                    const SizedBox(height: 12),
+                    _buildPassengerCard(),
+                    const SizedBox(height: 28),
+                    _buildSectionTitle('Payment'),
+                    const SizedBox(height: 12),
+                    _buildPaymentCard(),
+                    const SizedBox(height: 28),
+                    _buildSectionTitle('Ticket proof'),
+                    const SizedBox(height: 12),
+                    _buildProofCard(),
+                    const SizedBox(height: AppSpacing.md),
+                  ],
+                ),
+              ),
+            ),
+            _buildFooter(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHandle() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 10, bottom: 6),
+      child: Container(
+        width: 40,
+        height: 4,
+        decoration: BoxDecoration(
+          color: _kGrayStrong,
+          borderRadius: BorderRadius.circular(2),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    final status = _statusFor(
+      ready: _ready,
+      paid: _paid,
+      seen: _booking.agentSeen,
+    );
+    final label = status.label;
+    final fg = status.fg;
+    final bg = status.pill;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 8, 12, 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Flexible(
+            child: Text(
+              'Booking details',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTypography.titleMedium.copyWith(
+                color: AppColors.text,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.3,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(color: fg, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: AppTypography.labelSmall.copyWith(
+                    color: fg,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Spacer(),
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            tooltip: 'Close',
+            style: IconButton.styleFrom(
+              backgroundColor: _kGray,
+              minimumSize: const Size(36, 36),
+            ),
+            icon: const Icon(
+              Icons.close_rounded,
+              size: 18,
+              color: AppColors.textSub,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTripCard() {
+    final date = _booking.travelDate;
+    final dateLabel = date == null ? '\u2014' : _numericDateFormat.format(date);
+    final time = _booking.travelTime;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: _kGray,
+        borderRadius: BorderRadius.circular(_kCardRadius),
+      ),
+      child: Column(
+        children: [
+          if (_booking.agency?.name != null &&
+              _booking.agency!.name.isNotEmpty) ...[
+            Row(
+              children: [
+                const Icon(
+                  Icons.directions_bus_rounded,
+                  size: 15,
+                  color: AppColors.textMuted,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _booking.agency!.name,
+                    style: AppTypography.labelMedium.copyWith(
+                      color: AppColors.textSub,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+          ],
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _routeEndpoint(
+                  label: 'From',
+                  city: _booking.origin,
+                  filled: true,
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Column(
+                  children: [
+                    const SizedBox(height: 16),
+                    Container(width: 28, height: 2, color: _kGrayStrong),
+                    const SizedBox(height: 3),
+                    const Icon(
+                      Icons.arrow_forward_rounded,
+                      size: 15,
+                      color: AppColors.textSub,
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: _routeEndpoint(
+                  label: 'To',
+                  city: _booking.destination,
+                  filled: false,
+                  alignEnd: true,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          // White tone-on-tone panel instead of divider lines.
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+              color: AppColors.white,
+              borderRadius: BorderRadius.circular(_kControlRadius),
+            ),
+            child: Row(
+              children: [
+                Expanded(child: _miniDetail('Date', dateLabel)),
+                Expanded(
+                  child: _miniDetail(
+                    'Time',
+                    (time != null && time.isNotEmpty) ? time : '\u2014',
+                  ),
+                ),
+                Expanded(child: _miniDetail('Seats', '${_booking.seats}')),
+              ],
+            ),
+          ),
+          if (_booking.seatNumbers.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              'Seat ${_booking.seatNumbers.join(', ')}',
+              textAlign: TextAlign.center,
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.textMuted,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _routeEndpoint({
+    required String label,
+    required String city,
+    required bool filled,
+    bool alignEnd = false,
+  }) {
+    return Column(
+      crossAxisAlignment: alignEnd
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: AppTypography.labelSmall.copyWith(
+            color: AppColors.textMuted,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: alignEnd
+              ? MainAxisAlignment.end
+              : MainAxisAlignment.start,
+          children: [
+            if (!alignEnd) ...[
+              Container(
+                width: 7,
+                height: 7,
+                decoration: const BoxDecoration(
+                  color: AppColors.text,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Flexible(
+              child: Text(
+                city.isEmpty ? '\u2014' : city,
+                textAlign: alignEnd ? TextAlign.end : TextAlign.start,
+                style: AppTypography.titleSmall.copyWith(
+                  color: AppColors.text,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.2,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (alignEnd) ...[
+              const SizedBox(width: 6),
+              Container(
+                width: 7,
+                height: 7,
+                decoration: const BoxDecoration(
+                  color: AppColors.primary,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _miniDetail(String label, String value) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: AppTypography.labelSmall.copyWith(
+            color: AppColors.textMuted,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 3),
+        // Scale down rather than clip: a full date (dd/MM/yyyy) and the seat
+        // count must stay readable in a third of the card's width.
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            value,
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            style: AppTypography.bodySmall.copyWith(
+              color: AppColors.text,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPassengerCard() {
+    final passenger = _booking.passengerDetails.isNotEmpty
+        ? _booking.passengerDetails.first
+        : null;
+    final name = passenger?.name.isNotEmpty == true
+        ? passenger!.name
+        : (_booking.user?.name.isNotEmpty == true
+              ? _booking.user!.name
+              : 'Passenger');
+    final phone = passenger?.phone.isNotEmpty == true
+        ? passenger!.phone
+        : (_booking.phone ??
+              _booking.contactPhone ??
+              _booking.user?.phone ??
+              '');
+    final initials = name
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .map((part) => part.characters.first.toUpperCase())
+        .join();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: const BoxDecoration(
+              color: _kGray,
+              shape: BoxShape.circle,
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              initials.isEmpty ? 'P' : initials,
+              style: AppTypography.labelLarge.copyWith(
+                color: AppColors.text,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: AppTypography.labelLarge.copyWith(
+                    color: AppColors.text,
+                    fontWeight: FontWeight.w700,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (phone.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    phone,
+                    style: AppTypography.bodySmall.copyWith(
+                      color: AppColors.textSub,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (_booking.pickupPoint != null && _booking.pickupPoint!.isNotEmpty)
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 120),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: _kGray,
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.location_on_outlined,
+                      size: 12,
+                      color: AppColors.textMuted,
+                    ),
+                    const SizedBox(width: 3),
+                    Flexible(
+                      child: Text(
+                        _booking.pickupPoint!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTypography.labelSmall.copyWith(
+                          color: AppColors.textSub,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPaymentCard() {
+    final method = _methodLabel(_booking.paymentMethod);
+    final total = _booking.totalAmount > 0
+        ? '${_amountFormat.format(_booking.totalAmount)} RWF'
+        : 'Free ticket';
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Column(
+        children: [
+          _infoRow('Amount', total, emphasize: true),
+          const SizedBox(height: 12),
+          _infoRow(
+            'Payment',
+            _paid ? 'Paid' : 'Awaiting payment',
+            valueColor: _paid ? _kGreen : AppColors.warning,
+          ),
+          if (method != null) ...[
+            const SizedBox(height: 12),
+            _infoRow('Method', method),
+          ],
+          const SizedBox(height: 12),
+          _infoRow(
+            'Issued by agent',
+            _booking.agentSeen ? 'Seen' : 'Not yet seen',
+            valueColor: _booking.agentSeen ? _kGreen : AppColors.textSub,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoRow(
+    String label,
+    String value, {
+    Color? valueColor,
+    bool emphasize = false,
+  }) {
+    return Row(
+      children: [
+        Text(
+          label,
+          style: AppTypography.bodySmall.copyWith(color: AppColors.textMuted),
+        ),
+        const Spacer(),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style:
+                (emphasize ? AppTypography.titleSmall : AppTypography.bodySmall)
+                    .copyWith(
+                      color:
+                          valueColor ??
+                          (emphasize ? AppColors.text : AppColors.textSub),
+                      fontWeight: FontWeight.w700,
+                    ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  String? _methodLabel(String? method) {
+    return switch (method) {
+      'mom' => 'MTN MoMo',
+      'airtel' => 'Airtel Money',
+      'mpesa' => 'M-Pesa',
+      null || '' => null,
+      _ => method,
+    };
+  }
+
+  Widget _buildProofCard() {
+    if (!_ready) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: _kGray,
+          borderRadius: BorderRadius.circular(_kCardRadius),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: const BoxDecoration(
+                color: AppColors.white,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.photo_camera_outlined,
+                size: 18,
+                color: AppColors.textMuted,
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Text(
+                _waitingOnAgent
+                    ? 'No ticket photo yet. Capture it once the ticket is issued.'
+                    : 'The photo is captured after the passenger has paid.',
+                style: AppTypography.bodySmall.copyWith(
+                  color: AppColors.textSub,
+                  height: 1.45,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final url = resolveMediaUrl(_booking.ticketProofImage);
+    return Material(
+      color: _kGray,
+      borderRadius: BorderRadius.circular(_kCardRadius),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => widget.onViewProof(_booking),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: url == null
+                    ? Container(
+                        width: 52,
+                        height: 52,
+                        color: AppColors.white,
+                        child: const Icon(
+                          Icons.receipt_long_rounded,
+                          color: AppColors.textSub,
+                          size: 20,
+                        ),
+                      )
+                    : CachedNetworkImage(
+                        imageUrl: url,
+                        width: 52,
+                        height: 52,
+                        fit: BoxFit.cover,
+                        memCacheWidth: 160,
+                        httpHeaders: widget.imageHeaders,
+                        placeholder: (_, _) => Container(
+                          width: 52,
+                          height: 52,
+                          color: _kGrayStrong,
+                        ),
+                        errorWidget: (_, _, _) => Container(
+                          width: 52,
+                          height: 52,
+                          color: AppColors.white,
+                          child: const Icon(
+                            Icons.image_not_supported_outlined,
+                            color: AppColors.textMuted,
+                            size: 18,
+                          ),
+                        ),
+                      ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Ticket photo attached',
+                      style: AppTypography.labelMedium.copyWith(
+                        color: AppColors.text,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Tap to inspect the proof',
+                      style: AppTypography.bodySmall.copyWith(
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.textMuted,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSectionTitle(String title) {
+    return Text(
+      title,
+      style: AppTypography.titleSmall.copyWith(
+        color: AppColors.text,
+        fontWeight: FontWeight.w700,
+        letterSpacing: -0.2,
+      ),
+    );
+  }
+
+  Widget _buildFooter() {
+    return Container(
+      color: AppColors.white,
+      padding: EdgeInsets.fromLTRB(
+        20,
+        12,
+        20,
+        16 + MediaQuery.of(context).padding.bottom,
+      ),
+      child: _buildActions(),
+    );
+  }
+
+  Widget _buildActions() {
+    if (_busy) {
+      return const SizedBox(
+        height: 50,
+        child: Center(
+          child: SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.2,
+              color: AppColors.primary,
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (!_paid) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: _kGray,
+          borderRadius: BorderRadius.circular(_kControlRadius),
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.hourglass_top_rounded,
+              size: 16,
+              color: AppColors.textMuted,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Waiting for the passenger\u2019s payment',
+                style: AppTypography.bodySmall.copyWith(
+                  color: AppColors.textSub,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (!_booking.agentSeen) {
+      return SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          onPressed: () => _run(widget.onMarkSeen),
+          style: _primaryButtonStyle(),
+          icon: const Icon(Icons.visibility_rounded, size: 18),
+          label: const Text('Confirm I have seen this booking'),
+        ),
+      );
+    }
+
+    if (!_ready) {
+      return SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          onPressed: () => _run(widget.onMarkReady),
+          style: _primaryButtonStyle(),
+          icon: const Icon(Icons.camera_alt_rounded, size: 18),
+          label: const Text('Mark ready & photograph ticket'),
+        ),
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: FilledButton.icon(
+            onPressed: () => widget.onViewProof(_booking),
+            style: _grayButtonStyle(height: 48),
+            icon: const Icon(Icons.photo_outlined, size: 17),
+            label: const Text('View proof'),
+          ),
+        ),
+        const SizedBox(width: AppSpacing.sm),
+        Expanded(
+          child: FilledButton.icon(
+            onPressed: _replaceOrRetake,
+            style: _grayButtonStyle(height: 48, foreground: AppColors.textSub),
+            icon: const Icon(Icons.camera_alt_outlined, size: 17),
+            label: const Text('Replace photo'),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -53,6 +53,9 @@
 		<!-- Notification usage description -->
 		<key>NSUserNotificationUsageDescription</key>
 		<string>Katisha needs notification permission to send you journey alerts and booking updates.</string>
+		<!-- Location is used only to show fares and payment prices for the traveller's country -->
+		<key>NSLocationWhenInUseUsageDescription</key>
+		<string>Katisha uses your location to show fares and payment prices for your area.</string>
 		<!-- Camera / photo library (agents photograph the issued physical ticket) -->
 		<key>NSCameraUsageDescription</key>
 		<string>Katisha uses the camera so agents can photograph the issued physical ticket as proof.</string>

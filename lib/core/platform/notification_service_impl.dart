@@ -11,16 +11,19 @@ import 'package:timezone/data/latest_all.dart' as tz_data;
 
 import 'notification_service.dart';
 
-/// Departure alerts are deliberately loud and intrusive: one hour, thirty
-/// minutes, and twenty minutes before departure. They stay on the lock screen
-/// until the traveller snoozes them.
-const List<int> _kAlertOffsetsMinutes = [60, 30, 20];
+/// Departure alerts are deliberately loud and intrusive: two hours, one hour,
+/// and thirty minutes before departure. They stay on the lock screen until the
+/// traveller snoozes them.
+const List<int> _kAlertOffsetsMinutes = [120, 60, 30];
 const int _kMaxSnoozeCount = 3;
 const int _kSnoozeMinutes = 5;
 const String _kSnoozePrefix = 'snooze_';
 const String _kSnoozeActionId = 'snooze';
+const String _kOpenActionId = 'open_booking';
+const String _kDismissAgentActionId = 'dismiss_agent_alert';
 const String _kJourneyChannelId = 'Katisha_journey_alerts_v2';
 const String _kBookingChannelId = 'Katisha_booking_alerts_v2';
+const String _kAgentChannelId = 'Katisha_agent_alerts_v1';
 
 /// White silhouette drawable used as the Android status-bar icon. Mipmap
 /// launcher icons are not valid notification small icons (adaptive icons can
@@ -72,10 +75,13 @@ class NotificationServiceImpl implements NotificationService {
 
   late final AndroidNotificationDetails _journeyAndroidDetails;
   late final AndroidNotificationDetails _bookingAndroidDetails;
+  late final AndroidNotificationDetails _agentAndroidDetails;
   late final DarwinNotificationDetails _journeyIOSDetails;
   late final DarwinNotificationDetails _bookingIOSDetails;
+  late final DarwinNotificationDetails _agentIOSDetails;
   late final NotificationDetails _journeyNotificationDetails;
   late final NotificationDetails _bookingNotificationDetails;
+  late final NotificationDetails _agentNotificationDetails;
 
   NotificationServiceImpl({
     required FlutterLocalNotificationsPlugin plugin,
@@ -88,7 +94,7 @@ class NotificationServiceImpl implements NotificationService {
       _kJourneyChannelId,
       'Departure Alerts',
       channelDescription:
-          'Loud reminders one hour, thirty minutes, and twenty minutes before departure',
+          'Loud reminders two hours, one hour, and thirty minutes before departure',
       importance: Importance.max,
       priority: Priority.max,
       ticker: 'Departure Alert',
@@ -128,6 +134,42 @@ class NotificationServiceImpl implements NotificationService {
       vibrationPattern: Int64List.fromList(const [0, 500, 250, 500]),
       visibility: NotificationVisibility.public,
     );
+    // Field-agent alarms: a new booking, a booking that has been paid, or a
+    // booking that has been ignored for a day. Loud, pinned, and actionable so
+    // it cannot be missed while the agent is at the counter.
+    _agentAndroidDetails = AndroidNotificationDetails(
+      _kAgentChannelId,
+      'Action Required Alerts',
+      channelDescription:
+          'New bookings and bookings that still need the agent to act on them',
+      importance: Importance.max,
+      priority: Priority.max,
+      ticker: 'Action required',
+      icon: _kSmallIcon,
+      sound: const RawResourceAndroidNotificationSound('notification'),
+      playSound: true,
+      enableVibration: true,
+      vibrationPattern: Int64List.fromList(const [0, 1000, 500, 1000, 500, 1000]),
+      category: AndroidNotificationCategory.alarm,
+      fullScreenIntent: true,
+      ongoing: true,
+      autoCancel: false,
+      visibility: NotificationVisibility.public,
+      actions: const [
+        AndroidNotificationAction(
+          _kOpenActionId,
+          'Open',
+          showsUserInterface: true,
+          cancelNotification: true,
+        ),
+        AndroidNotificationAction(
+          _kDismissAgentActionId,
+          'Dismiss',
+          showsUserInterface: false,
+          cancelNotification: true,
+        ),
+      ],
+    );
     _journeyIOSDetails = const DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
@@ -145,6 +187,15 @@ class NotificationServiceImpl implements NotificationService {
       presentList: true,
       interruptionLevel: InterruptionLevel.active,
     );
+    _agentIOSDetails = const DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+      presentBanner: true,
+      presentList: true,
+      interruptionLevel: InterruptionLevel.timeSensitive,
+      categoryIdentifier: 'agent_alert',
+    );
     _journeyNotificationDetails = NotificationDetails(
       android: _journeyAndroidDetails,
       iOS: _journeyIOSDetails,
@@ -152,6 +203,10 @@ class NotificationServiceImpl implements NotificationService {
     _bookingNotificationDetails = NotificationDetails(
       android: _bookingAndroidDetails,
       iOS: _bookingIOSDetails,
+    );
+    _agentNotificationDetails = NotificationDetails(
+      android: _agentAndroidDetails,
+      iOS: _agentIOSDetails,
     );
   }
 
@@ -184,6 +239,16 @@ class NotificationServiceImpl implements NotificationService {
             ),
           ],
         ),
+        DarwinNotificationCategory(
+          'agent_alert',
+          actions: [
+            DarwinNotificationAction.plain(
+              _kOpenActionId,
+              'Open booking',
+              options: {DarwinNotificationActionOption.foreground},
+            ),
+          ],
+        ),
       ],
     );
     final settings = InitializationSettings(
@@ -197,6 +262,8 @@ class NotificationServiceImpl implements NotificationService {
         final actionId = response.actionId;
         final payload = response.payload;
         if (payload != null) {
+          // A dismissed agent alarm should not open the app.
+          if (actionId == _kDismissAgentActionId) return;
           final data = _parsePayload(payload);
           final bookingId = data['entity_id'];
           if (actionId == _kSnoozeActionId &&
@@ -225,7 +292,7 @@ class NotificationServiceImpl implements NotificationService {
           _kJourneyChannelId,
           'Departure Alerts',
           description:
-              'Loud reminders one hour, thirty minutes, and twenty minutes before departure',
+              'Loud reminders two hours, one hour, and thirty minutes before departure',
           importance: Importance.max,
           playSound: true,
           enableVibration: true,
@@ -237,6 +304,17 @@ class NotificationServiceImpl implements NotificationService {
           'Booking Alerts',
           description:
               'Notifications for new bookings, ticket issuance, and payment confirmations',
+          importance: Importance.max,
+          playSound: true,
+          enableVibration: true,
+        ),
+      );
+      await androidPlugin?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _kAgentChannelId,
+          'Action Required Alerts',
+          description:
+              'New bookings and bookings that still need the agent to act on them',
           importance: Importance.max,
           playSound: true,
           enableVibration: true,
@@ -323,12 +401,20 @@ class NotificationServiceImpl implements NotificationService {
     )) {
       return;
     }
+    // Action-required pushes (field-agent alerts) use the loud pinned channel
+    // even when they arrive as a foreground FCM message.
+    final actionable = const {
+      'new_booking',
+      'booking_paid',
+      'agent_reminder',
+    }.contains(payload.type);
+
     try {
       await _plugin.show(
         DateTime.now().millisecondsSinceEpoch.remainder(100000),
         payload.title.isEmpty ? 'Katisha' : payload.title,
         payload.body,
-        _bookingNotificationDetails,
+        actionable ? _agentNotificationDetails : _bookingNotificationDetails,
         payload: _encodePayload({
           'title': payload.title,
           'body': payload.body,
@@ -461,6 +547,36 @@ class NotificationServiceImpl implements NotificationService {
   }
 
   @override
+  Future<bool?> notificationsEnabled() async {
+    try {
+      await _ensureInitialized();
+    } catch (_) {
+      return null;
+    }
+
+    if (Platform.isAndroid) {
+      final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      try {
+        return await androidPlugin?.areNotificationsEnabled();
+      } catch (_) {
+        return null;
+      }
+    } else if (Platform.isIOS) {
+      final iosPlugin = _plugin.resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>();
+      try {
+        final options = await iosPlugin?.checkPermissions();
+        if (options == null) return null;
+        return options.isEnabled || options.isProvisionalEnabled;
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  @override
   Future<void> scheduleJourneyAlert({
     required String bookingId,
     required String routeName,
@@ -471,7 +587,7 @@ class NotificationServiceImpl implements NotificationService {
       bookingId: bookingId,
       routeName: routeName,
       departureTime: departureTime,
-      minutesBefore: 20,
+      minutesBefore: 30,
     );
   }
 
@@ -507,7 +623,9 @@ class NotificationServiceImpl implements NotificationService {
       return;
     }
 
-    final title = minutesBefore >= 60
+    final title = minutesBefore >= 120
+        ? 'Your journey starts in 2 hours'
+        : minutesBefore >= 60
         ? 'Your journey starts in 1 hour'
         : 'Your journey starts in $minutesBefore minutes';
     final payload = _encodePayload({
@@ -522,17 +640,41 @@ class NotificationServiceImpl implements NotificationService {
         _bookingToNotificationId(bookingId) + minutesBefore;
     final tzScheduledTime = tz.TZDateTime.from(scheduledTime, tz.local);
 
-    await _plugin.zonedSchedule(
-      notificationId,
-      title,
-      'Route: $routeName. Snooze to dismiss this alert.',
-      tzScheduledTime,
-      _journeyNotificationDetails,
-      payload: payload,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-    );
+    // Exact alarms can be refused when the user has not granted "Alarms &
+    // reminders" (Android 12+). Falling back to an inexact alarm still delivers
+    // the reminder instead of losing it entirely.
+    try {
+      await _plugin.zonedSchedule(
+        notificationId,
+        title,
+        'Route: $routeName. Snooze to dismiss this alert.',
+        tzScheduledTime,
+        _journeyNotificationDetails,
+        payload: payload,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    } catch (error) {
+      debugPrint('[Notifications] Exact departure alarm refused: $error');
+      try {
+        await _plugin.zonedSchedule(
+          notificationId,
+          title,
+          'Route: $routeName. Snooze to dismiss this alert.',
+          tzScheduledTime,
+          _journeyNotificationDetails,
+          payload: payload,
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+        );
+      } catch (fallbackError) {
+        debugPrint(
+          '[Notifications] Departure alarm could not be scheduled: $fallbackError',
+        );
+      }
+    }
   }
 
   @override
@@ -550,6 +692,7 @@ class NotificationServiceImpl implements NotificationService {
     required String body,
     required String type,
     String? entityId,
+    bool alarm = false,
   }) async {
     if (_isDuplicate(type, entityId, title: title)) return;
 
@@ -567,7 +710,7 @@ class NotificationServiceImpl implements NotificationService {
       notificationId,
       title,
       body,
-      _bookingNotificationDetails,
+      alarm ? _agentNotificationDetails : _bookingNotificationDetails,
       payload: payload,
     );
   }
@@ -602,17 +745,36 @@ class NotificationServiceImpl implements NotificationService {
     });
     final tzSnoozeTime = tz.TZDateTime.from(snoozeTime, tz.local);
 
-    await _plugin.zonedSchedule(
-      notificationId,
-      title,
-      body,
-      tzSnoozeTime,
-      _journeyNotificationDetails,
-      payload: payload,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-    );
+    try {
+      await _plugin.zonedSchedule(
+        notificationId,
+        title,
+        body,
+        tzSnoozeTime,
+        _journeyNotificationDetails,
+        payload: payload,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+      );
+    } catch (_) {
+      // See _scheduleJourneyAlertAt: inexact delivery beats a lost alarm.
+      try {
+        await _plugin.zonedSchedule(
+          notificationId,
+          title,
+          body,
+          tzSnoozeTime,
+          _journeyNotificationDetails,
+          payload: payload,
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+        );
+      } catch (error) {
+        debugPrint('[Notifications] Snooze alarm failed: $error');
+      }
+    }
   }
 
   @override
@@ -729,6 +891,12 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   final body = (data['body'] ?? '').toString();
   if (body.isEmpty) return;
 
+  final actionable = const {
+    'new_booking',
+    'booking_paid',
+    'agent_reminder',
+  }.contains(data['type']?.toString());
+
   try {
     final plugin = FlutterLocalNotificationsPlugin();
     const init = InitializationSettings(
@@ -744,19 +912,23 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       DateTime.now().millisecondsSinceEpoch.remainder(100000),
       title,
       body,
-      const NotificationDetails(
+      NotificationDetails(
         android: AndroidNotificationDetails(
-          _kBookingChannelId,
-          'Booking Alerts',
-          channelDescription:
-              'Notifications for new bookings, ticket issuance, and payment confirmations',
+          actionable ? _kAgentChannelId : _kBookingChannelId,
+          actionable ? 'Action Required Alerts' : 'Booking Alerts',
+          channelDescription: actionable
+              ? 'New bookings and bookings that still need the agent to act on them'
+              : 'Notifications for new bookings, ticket issuance, and payment confirmations',
           importance: Importance.max,
           priority: Priority.max,
           icon: _kSmallIcon,
           playSound: true,
           enableVibration: true,
+          fullScreenIntent: actionable,
+          ongoing: actionable,
+          autoCancel: !actionable,
         ),
-        iOS: DarwinNotificationDetails(
+        iOS: const DarwinNotificationDetails(
           presentAlert: true,
           presentBadge: true,
           presentSound: true,

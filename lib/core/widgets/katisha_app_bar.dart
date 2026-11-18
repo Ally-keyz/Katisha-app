@@ -8,7 +8,8 @@ import '../theme/app_typography.dart';
 /// Standard app bar for all shell-tab screens.
 ///
 /// Layout: [title] on the left · Bus Lottie in the center · notification
-/// bell on the right. White background, no elevation.
+/// bell on the right. Flat white surface: no elevation, no scroll tint and no
+/// divider, so it blends into the borderless screens below it.
 class KatishaAppBar extends StatelessWidget implements PreferredSizeWidget {
   final String title;
   final Color? titleColor;
@@ -32,13 +33,19 @@ class KatishaAppBar extends StatelessWidget implements PreferredSizeWidget {
   });
 
   @override
-  Size get preferredSize => Size.fromHeight(kToolbarHeight + (bottom?.preferredSize.height ?? 0));
+  Size get preferredSize =>
+      Size.fromHeight(kToolbarHeight + (bottom?.preferredSize.height ?? 0));
 
   @override
   Widget build(BuildContext context) {
     return AppBar(
       backgroundColor: AppColors.white,
       foregroundColor: AppColors.text,
+      // Material 3 tints the bar (and adds a shadow) once content scrolls
+      // underneath it. Turn both off to keep the bar perfectly flat.
+      surfaceTintColor: Colors.transparent,
+      scrolledUnderElevation: 0,
+      shadowColor: Colors.transparent,
       // White toolbar, so pin dark status/navigation bar icons regardless of
       // which route (e.g. the dark welcome page) was on screen before.
       systemOverlayStyle: const SystemUiOverlayStyle(
@@ -50,10 +57,15 @@ class KatishaAppBar extends StatelessWidget implements PreferredSizeWidget {
       ),
       elevation: 0,
       centerTitle: false,
+      titleSpacing: 20,
       automaticallyImplyLeading: showBackButton,
       title: Text(
         title,
-        style: AppTypography.titleLarge.copyWith(color: titleColor ?? AppColors.text),
+        style: AppTypography.titleLarge.copyWith(
+          color: titleColor ?? AppColors.text,
+          fontWeight: FontWeight.w700,
+          letterSpacing: -0.4,
+        ),
       ),
       actions: [
         if (extraActions != null) ...extraActions!,
@@ -82,7 +94,10 @@ class KatishaAppBar extends StatelessWidget implements PreferredSizeWidget {
             clipBehavior: Clip.none,
             children: [
               IconButton(
-                icon: const Icon(Icons.notifications_outlined, color: AppColors.text),
+                icon: const Icon(
+                  Icons.notifications_outlined,
+                  color: AppColors.text,
+                ),
                 onPressed: () => context.push('/notifications'),
               ),
               if (unreadCount > 0)
@@ -91,7 +106,10 @@ class KatishaAppBar extends StatelessWidget implements PreferredSizeWidget {
                   top: 6,
                   child: Container(
                     padding: const EdgeInsets.all(4),
-                    constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
+                    constraints: const BoxConstraints(
+                      minWidth: 18,
+                      minHeight: 18,
+                    ),
                     decoration: const BoxDecoration(
                       color: AppColors.error,
                       shape: BoxShape.circle,
@@ -111,7 +129,7 @@ class KatishaAppBar extends StatelessWidget implements PreferredSizeWidget {
                 ),
             ],
           ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 8),
       ],
       bottom: bottom,
     );

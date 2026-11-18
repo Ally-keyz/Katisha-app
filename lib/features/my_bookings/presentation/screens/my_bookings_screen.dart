@@ -9,6 +9,8 @@ import 'package:go_router/go_router.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../../core/error/failures.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/network/media_url.dart';
+import '../../../../core/network/socket_service.dart';
 import '../../../../core/platform/badge_counts.dart';
 import '../../../../core/platform/local_ticket_store.dart';
 import '../../../../core/platform/platform_providers.dart';
@@ -41,6 +43,7 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
   List<Booking> _bookings = [];
   bool _loading = false;
   String? _error;
+  StreamSubscription<SocketEvent>? _socketSub;
 
   MyBookingsRepository get _repo => ref.read(_myBookingsRepoProvider);
 
@@ -48,6 +51,25 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
   void initState() {
     super.initState();
     _fetchBookings();
+    // The agent can issue the physical ticket while this list is on screen;
+    // refresh as soon as the ticket/payment state changes.
+    _socketSub = ref.read(socketServiceProvider).onEvent.listen((event) {
+      const relevant = {
+        'ticket_uploaded',
+        'booking_status',
+        'booking_ready',
+        'booking_issued',
+      };
+      if (!relevant.contains(event.name)) return;
+      if (_loading) return;
+      unawaited(_fetchBookings(refresh: true, silent: true));
+    });
+  }
+
+  @override
+  void dispose() {
+    _socketSub?.cancel();
+    super.dispose();
   }
 
   bool _isNonExpired(Booking b) {
@@ -83,7 +105,10 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
     return false;
   }
 
-  Future<void> _fetchBookings({bool refresh = false}) async {
+  Future<void> _fetchBookings({
+    bool refresh = false,
+    bool silent = false,
+  }) async {
     // Never stack requests: without this the scroll listener could re-enter
     // this method while a slow page is still in flight.
     if (_loading && !refresh) return;
@@ -91,8 +116,12 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
       setState(() {
         _page = 1;
         _hasMore = true;
-        _bookings = [];
-        _loading = true;
+        // A socket-driven refresh keeps the current list on screen until the
+        // fresh page arrives, so the issued ticket swaps in without a flash.
+        if (!silent) {
+          _bookings = [];
+          _loading = true;
+        }
       });
     } else {
       setState(() => _loading = true);
@@ -196,18 +225,28 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
     List<Booking> bookings,
   ) async {
     for (final booking in bookings) {
-      final imageUrl = booking.ticketImage;
-      if (imageUrl == null || imageUrl.isEmpty) continue;
+      // The agent's photo of the physical ticket is the real ticket once it
+      // exists; the system-generated image is only the pre-issue fallback.
+      final proofUrl = booking.ticketProofImage;
+      final primaryUrl = (proofUrl != null && proofUrl.isNotEmpty)
+          ? proofUrl
+          : booking.ticketImage;
+      if (primaryUrl == null || primaryUrl.isEmpty) continue;
+
       final exists = await store.getTicketImagePath(booking.id);
-      if (exists != null) continue;
+      final cachedUrl = await store.getTicketImageUrl(booking.id);
+      if (exists != null && cachedUrl == primaryUrl) continue;
       try {
-        final response = await api.downloadBytes(imageUrl);
+        final response = await api.downloadBytes(
+          resolveMediaUrl(primaryUrl) ?? primaryUrl,
+        );
         final data = response.data;
         if (data is List<int>) {
           await store.saveTicketImage(
             booking.id,
             Uint8List.fromList(data),
           );
+          await store.setTicketImageUrl(booking.id, primaryUrl);
         }
       } catch (_) {}
     }
@@ -227,6 +266,11 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
       'status': booking.status,
       'paymentStatus': booking.paymentStatus,
       'paymentMethod': booking.paymentMethod,
+      'paymentProvider': booking.paymentProvider,
+      'paymentCountry': booking.paymentCountry,
+      'paymentCurrency': booking.paymentCurrency,
+      'paymentAmount': booking.paymentAmount,
+      'fxRate': booking.fxRate,
       'ticketImage': booking.ticketImage,
       'receiptImage': booking.receiptImage,
       'ticketProofImage': booking.ticketProofImage,
@@ -784,31 +828,50 @@ class _TicketModalState extends ConsumerState<_TicketModal> {
 
   Future<void> _resolveLocalImage() async {
     final store = ref.read(localTicketStoreProvider);
+    final proofUrl = widget.booking.ticketProofImage;
+    final primaryUrl = (proofUrl != null && proofUrl.isNotEmpty)
+        ? proofUrl
+        : widget.booking.ticketImage;
+
     final path = await store.getTicketImagePath(widget.booking.id);
+    final cachedUrl = await store.getTicketImageUrl(widget.booking.id);
     if (!mounted) return;
-    if (path != null) {
+    // The cached file is only good while it matches the image the booking now
+    // points at (the agent's issued ticket replaces the system one).
+    if (path != null && cachedUrl == primaryUrl) {
       setState(() => _localImagePath = path);
       return;
     }
 
-    // Auto-download the ticket image into app-private storage if it has not
-    // been fetched yet, so the modal works offline too.
-    final imageUrl = widget.booking.ticketImage;
-    if (imageUrl == null || imageUrl.isEmpty) return;
+    if (primaryUrl == null || primaryUrl.isEmpty) {
+      if (path != null) setState(() => _localImagePath = path);
+      return;
+    }
+
+    // Download the current ticket image into app-private storage so the modal
+    // works offline too.
     try {
       final api = ref.read(apiClientProvider);
-      final response = await api.downloadBytes(imageUrl);
+      final response = await api.downloadBytes(
+        resolveMediaUrl(primaryUrl) ?? primaryUrl,
+      );
       final data = response.data;
       if (data is List<int>) {
         final saved = await store.saveTicketImage(
           widget.booking.id,
           Uint8List.fromList(data),
         );
+        await store.setTicketImageUrl(widget.booking.id, primaryUrl);
         if (saved != null && mounted) {
           setState(() => _localImagePath = saved);
         }
       }
-    } catch (_) {}
+    } catch (_) {
+      // Fall back to whatever is already cached.
+      if (path != null && mounted) {
+        setState(() => _localImagePath = path);
+      }
+    }
   }
 
   Widget _buildModalImageLoad() {
@@ -889,7 +952,10 @@ class _TicketModalState extends ConsumerState<_TicketModal> {
     final localImagePath = _localImagePath;
     final hasLocalImage =
         localImagePath != null && localImagePath.isNotEmpty;
-    final ticketImage = widget.booking.ticketImage;
+    final proofUrl = widget.booking.ticketProofImage;
+    final ticketImage = (proofUrl != null && proofUrl.isNotEmpty)
+        ? proofUrl
+        : widget.booking.ticketImage;
 
     return GestureDetector(
       onTap: () => Navigator.of(context).pop(),
@@ -938,7 +1004,8 @@ class _TicketModalState extends ConsumerState<_TicketModal> {
                                     _buildModalImageLoad(),
                               )
                             : CachedNetworkImage(
-                                imageUrl: ticketImage ?? '',
+                                imageUrl:
+                                    resolveMediaUrl(ticketImage) ?? '',
                                 fit: BoxFit.fitWidth,
                                 alignment: Alignment.topCenter,
                                 memCacheWidth: (ticketWidth *

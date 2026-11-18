@@ -95,6 +95,9 @@ class SocketServiceImpl implements SocketService {
       'booking_ready',
       'booking_rejected',
       'booking_cancelled',
+      'booking_paid',
+      'booking_closed',
+      'agent_reminder',
       'ticket_uploaded',
     ]) {
       _socket!.on(eventName, (data) {

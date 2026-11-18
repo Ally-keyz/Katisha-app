@@ -54,6 +54,7 @@ dependencies:
   timezone: ^0.10.1
   firebase_core: ^5.1.0
   firebase_messaging: ^17.0.1
+  geolocator: ^14.0.2
 
 dependency_overrides:
   jni: 1.0.3

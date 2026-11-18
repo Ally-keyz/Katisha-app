@@ -16,6 +16,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 class LocalTicketStore {
   static const _indexKey = 'Katisha_local_tickets_v1';
 
+  /// Maps a booking id to the remote image URL the cached file was downloaded
+  /// from, so a newly issued (agent) ticket replaces the older system receipt
+  /// instead of being skipped because a file already exists.
+  static const _imageUrlIndexKey = 'Katisha_local_ticket_image_urls_v1';
+
   final SharedPreferences _prefs;
 
   LocalTicketStore(this._prefs);
@@ -79,11 +84,28 @@ class LocalTicketStore {
     }
   }
 
+  /// The remote URL the cached image was downloaded from, or null.
+  Future<String?> getTicketImageUrl(String bookingId) async {
+    final map = await _readImageUrls();
+    return map[bookingId];
+  }
+
+  /// Records which remote image is stored for a booking.
+  Future<void> setTicketImageUrl(String bookingId, String url) async {
+    final map = await _readImageUrls();
+    map[bookingId] = url;
+    await _prefs.setString(_imageUrlIndexKey, jsonEncode(map));
+  }
+
   /// Removes a cached ticket (data + image) for a booking id.
   Future<void> removeTicket(String bookingId) async {
     final index = await _readIndex();
     index.remove(bookingId);
     await _writeIndex(index);
+    final imageUrls = await _readImageUrls();
+    if (imageUrls.remove(bookingId) != null) {
+      await _prefs.setString(_imageUrlIndexKey, jsonEncode(imageUrls));
+    }
     try {
       final dir = await _ticketDir();
       final file = File('${dir.path}/$bookingId.png');
@@ -137,5 +159,16 @@ class LocalTicketStore {
 
   Future<void> _writeIndex(Map<String, String> index) async {
     await _prefs.setString(_indexKey, jsonEncode(index));
+  }
+
+  Future<Map<String, String>> _readImageUrls() async {
+    final raw = _prefs.getString(_imageUrlIndexKey);
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      return decoded.map((k, v) => MapEntry(k, v as String));
+    } catch (_) {
+      return {};
+    }
   }
 }

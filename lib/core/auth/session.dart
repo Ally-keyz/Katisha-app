@@ -145,6 +145,41 @@ class SessionController extends StateNotifier<SessionUser?> {
     return user;
   }
 
+  /// Changes the signed-in account's password.
+  ///
+  /// The server rotates the refresh token and returns a fresh pair, so the new
+  /// tokens are persisted here to keep the current device signed in (every
+  /// other session is invalidated by the rotation).
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+    required String confirmPassword,
+  }) async {
+    final response = await _api.patch(
+      '/auth/change-password',
+      data: {
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+        'confirmPassword': confirmPassword,
+      },
+    );
+
+    final payload = response.data is Map<String, dynamic>
+        ? response.data as Map<String, dynamic>
+        : const <String, dynamic>{};
+    final accessToken = payload['accessToken'] as String?;
+    final refreshToken = payload['refreshToken'] as String?;
+    if (accessToken != null &&
+        accessToken.isNotEmpty &&
+        refreshToken != null &&
+        refreshToken.isNotEmpty) {
+      await _api.setTokens(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+      );
+    }
+  }
+
   Future<void> logout() async {
     // Unregister this device while the access token is still valid, otherwise
     // the phone would keep receiving the previous account's push notifications.

@@ -613,7 +613,9 @@ class _NotificationTile extends StatelessWidget {
         AppColors.primary,
       'booking_confirmed' || 'payment' || 'payment_received' =>
         AppColors.statusPaid,
-      'booking_rejected' || 'cancellation' => AppColors.error,
+      'booking_rejected' || 'cancellation' || 'booking_closed' =>
+        AppColors.error,
+      'booking_paid' => AppColors.statusPaid,
       'journey_alert' || 'journey_alert_snooze' => AppColors.warning,
       'ticket_uploaded' => AppColors.info,
       'announcement' || 'info' => AppColors.info,
@@ -625,7 +627,9 @@ class _NotificationTile extends StatelessWidget {
     return switch (type) {
       'booking' || 'booking_created' || 'booking_issued' =>
         Icons.confirmation_num_outlined,
-      'booking_rejected' || 'cancellation' => Icons.cancel_outlined,
+      'booking_rejected' || 'cancellation' || 'booking_closed' =>
+        Icons.cancel_outlined,
+      'booking_paid' => Icons.payments_outlined,
       'booking_confirmed' || 'payment' || 'payment_received' =>
         Icons.payment_rounded,
       'journey_alert' || 'journey_alert_snooze' =>

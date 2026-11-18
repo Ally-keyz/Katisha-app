@@ -6,6 +6,7 @@ import '../../../core/error/failures.dart';
 import '../../../core/network/api_client.dart';
 import '../../../shared/models/booking_model.dart';
 import '../../../shared/models/booking_response.dart';
+import '../../../shared/models/payment_options_model.dart';
 import '../../../shared/models/route_model.dart';
 
 class BookingRepository {
@@ -35,6 +36,30 @@ class BookingRepository {
           .map((r) => RouteModel.fromJson(r as Map<String, dynamic>))
           .toList();
       return Right(routes);
+    } on DioException catch (e) {
+      return Left(ApiClient.mapDioError(e));
+    } catch (e) {
+      return Left(ServerFailure(e.toString()));
+    }
+  }
+
+  /// Countries, mobile-money providers and currencies enabled on pawaPay,
+  /// plus the FX table used to show the fare in the traveller's currency.
+  Future<Either<Failure, PaymentOptions>> getPaymentOptions({
+    String? country,
+    String? phone,
+  }) async {
+    try {
+      final response = await _apiClient.get(
+        '/bookings/payment-options',
+        queryParameters: {
+          if (country != null && country.isNotEmpty) 'country': country,
+          if (phone != null && phone.isNotEmpty) 'phone': phone,
+        },
+      );
+      return Right(
+        PaymentOptions.fromJson(response.data as Map<String, dynamic>),
+      );
     } on DioException catch (e) {
       return Left(ApiClient.mapDioError(e));
     } catch (e) {

@@ -52,15 +52,21 @@ abstract class NotificationService {
   /// Returns true if permission was granted.
   Future<bool> requestPermission();
 
-  /// Schedules a loud local notification 20 minutes before [departureTime].
+  /// Current OS permission state, without prompting.
+  ///
+  /// `true` means alerts can be shown, `false` means the user (or the OS) has
+  /// blocked them, and `null` means the platform could not be queried.
+  Future<bool?> notificationsEnabled();
+
+  /// Schedules the most urgent (30-minute) departure reminder.
   Future<void> scheduleJourneyAlert({
     required String bookingId,
     required String routeName,
     required DateTime departureTime,
   });
 
-  /// Schedules loud, snooze-to-dismiss local notifications 60, 30, and 20
-  /// minutes before [departureTime].
+  /// Schedules loud, snooze-to-dismiss local notifications 2 hours, 1 hour, and
+  /// 30 minutes before [departureTime].
   Future<void> scheduleJourneyAlerts({
     required String bookingId,
     required String routeName,
@@ -68,11 +74,16 @@ abstract class NotificationService {
   });
 
   /// Shows an immediate notification with sound and vibration.
+  ///
+  /// Set [alarm] for alerts the recipient must act on (field-agent alerts):
+  /// those use the loud, pinned "Action Required" channel with Open/Dismiss
+  /// actions instead of the regular booking channel.
   Future<void> showImmediateAlert({
     required String title,
     required String body,
     required String type,
     String? entityId,
+    bool alarm = false,
   });
 
   /// Cancels a previously scheduled journey alert by booking ID.

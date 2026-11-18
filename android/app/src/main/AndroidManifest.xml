@@ -17,6 +17,11 @@
     <!-- Internet (required for all API calls) -->
     <uses-permission android:name="android.permission.INTERNET"/>
 
+    <!-- Location: used only to show fares and payment prices for the
+         traveller's country. Requested after an in-app explanation. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+
     <application
         android:label="Katisha"
         android:name="${applicationName}"

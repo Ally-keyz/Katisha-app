@@ -107,6 +107,11 @@ class Booking {
   final String status;
   final String paymentStatus;
   final String? paymentMethod;
+  final String? paymentProvider;
+  final String? paymentCountry;
+  final String? paymentCurrency;
+  final int? paymentAmount;
+  final double? fxRate;
   final String? phone;
   final bool isGuest;
   final bool isBulkBooking;
@@ -148,6 +153,11 @@ class Booking {
     this.status = 'pending',
     this.paymentStatus = 'pending',
     this.paymentMethod,
+    this.paymentProvider,
+    this.paymentCountry,
+    this.paymentCurrency,
+    this.paymentAmount,
+    this.fxRate,
     this.phone,
     this.isGuest = false,
     this.isBulkBooking = false,
@@ -200,6 +210,11 @@ class Booking {
       status: json['status'] as String? ?? 'pending',
       paymentStatus: json['paymentStatus'] as String? ?? 'pending',
       paymentMethod: json['paymentMethod'] as String?,
+      paymentProvider: json['paymentProvider'] as String?,
+      paymentCountry: json['paymentCountry'] as String?,
+      paymentCurrency: json['paymentCurrency'] as String?,
+      paymentAmount: (json['paymentAmount'] as num?)?.toInt(),
+      fxRate: (json['fxRate'] as num?)?.toDouble(),
       phone: json['phone'] as String?,
       isGuest: json['isGuest'] as bool? ?? false,
       isBulkBooking: json['isBulkBooking'] as bool? ?? false,

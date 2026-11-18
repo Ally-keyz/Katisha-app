@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -9,6 +10,7 @@ import 'package:intl/intl.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/media_url.dart';
+import '../../../../core/network/socket_service.dart';
 import '../../../../core/platform/badge_counts.dart';
 import '../../../../core/platform/local_ticket_store.dart';
 import '../../../../core/platform/platform_providers.dart';
@@ -38,25 +40,49 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
   String? _proofUrl;
   String? _receiptUrl;
   String? _localImagePath;
+
+  /// The remote URL the cached [localImagePath] was downloaded from. Lets the
+  /// screen tell the old system ticket from the agent's issued-ticket photo.
+  String? _localImageUrl;
   Map<String, dynamic>? _ticketData;
+  StreamSubscription<SocketEvent>? _socketSub;
 
   @override
   void initState() {
     super.initState();
     _loadTicket();
+    _listenForTicketUpdates();
   }
 
   @override
   void dispose() {
-    super.dispose();
+    _socketSub?.cancel();
     ScreenSecurity.disable();
+    super.dispose();
   }
 
-  Future<void> _loadTicket() async {
-    setState(() {
-      _loading = true;
-      _error = null;
+  /// The agent uploads the physical-ticket photo from the counter. The socket
+  /// event lands here immediately so this open screen swaps to the new ticket
+  /// without the passenger having to leave and come back.
+  void _listenForTicketUpdates() {
+    _socketSub = ref.read(socketServiceProvider).onEvent.listen((event) {
+      const relevant = {'ticket_uploaded', 'booking_ready', 'booking_status'};
+      if (!relevant.contains(event.name)) return;
+      final data = event.data;
+      if (data is! Map<String, dynamic>) return;
+      final id = data['bookingId']?.toString();
+      if (id != null && id.isNotEmpty && id != widget.bookingId) return;
+      unawaited(_loadTicket(silent: true, announce: true));
     });
+  }
+
+  Future<void> _loadTicket({bool silent = false, bool announce = false}) async {
+    if (!silent) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
 
     await ScreenSecurity.enable();
 
@@ -64,16 +90,20 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
     final localStore = ref.read(localTicketStoreProvider);
     final cached = await localStore.getBooking(widget.bookingId);
     final localImage = await localStore.getTicketImagePath(widget.bookingId);
+    final localImageUrl = await localStore.getTicketImageUrl(widget.bookingId);
     if (!mounted) return;
-    if (cached != null) {
+    if (cached != null && !silent) {
       setState(() {
         _ticketData = cached;
         _localImagePath = localImage;
+        _localImageUrl = localImageUrl;
         _proofUrl = cached['ticketProofImage'] as String?;
         _receiptUrl = cached['receiptImage'] as String?;
         _loading = false;
       });
     }
+
+    final hadProof = _proofUrl != null && _proofUrl!.isNotEmpty;
 
     // 2) Refresh from the network and update the local cache.
     final repo = ref.read(_myBookingsRepoProvider);
@@ -107,9 +137,18 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
           });
         }
 
-        if (imageUrl != null && imageUrl.isNotEmpty) {
-          // Auto-download the ticket image into app-private storage.
-          _downloadPrivateImage(localStore, imageUrl);
+        // Once the agent has issued the physical ticket, that photo is the
+        // real ticket: cache it (replacing the system-generated one).
+        final primaryUrl = (proofUrl != null && proofUrl.isNotEmpty)
+            ? proofUrl
+            : imageUrl;
+        final cachedImageUrl = await localStore.getTicketImageUrl(
+          widget.bookingId,
+        );
+        if (primaryUrl != null &&
+            primaryUrl.isNotEmpty &&
+            primaryUrl != cachedImageUrl) {
+          unawaited(_downloadPrivateImage(localStore, primaryUrl));
         }
 
         if (!mounted) return;
@@ -128,6 +167,26 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
           _error = null;
         });
 
+        if (announce &&
+            !hadProof &&
+            proofUrl != null &&
+            proofUrl.isNotEmpty) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              SnackBar(
+                content: const Text(
+                  'Your issued ticket is here. The ticket was updated by the agent.',
+                ),
+                backgroundColor: AppColors.text,
+                behavior: SnackBarBehavior.floating,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                ),
+              ),
+            );
+        }
+
         ref.read(badgeCountsProvider.notifier).refresh();
       },
     );
@@ -141,15 +200,24 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
   ) async {
     try {
       final api = ref.read(apiClientProvider);
-      final response = await api.downloadBytes(imageUrl);
+      // Local-storage media comes back as `/uploads/...`; Cloudinary as a full
+      // URL. Resolve before downloading, but keep the raw value as the marker
+      // so it matches the value the API returns next time.
+      final response = await api.downloadBytes(
+        resolveMediaUrl(imageUrl) ?? imageUrl,
+      );
       final bytes = response.data;
       if (bytes is Uint8List || bytes is List<int>) {
         final path = await localStore.saveTicketImage(
           widget.bookingId,
           Uint8List.fromList(bytes as List<int>),
         );
+        await localStore.setTicketImageUrl(widget.bookingId, imageUrl);
         if (path != null && mounted) {
-          setState(() => _localImagePath = path);
+          setState(() {
+            _localImagePath = path;
+            _localImageUrl = imageUrl;
+          });
         }
       }
     } catch (_) {}
@@ -253,10 +321,6 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
             const SizedBox(height: AppSpacing.md),
             _buildTripSummaryCard(l10n),
             const SizedBox(height: AppSpacing.md),
-            if (_proofUrl != null && _proofUrl!.isNotEmpty) ...[
-              _buildProofCard(),
-              const SizedBox(height: AppSpacing.md),
-            ],
             if (_receiptUrl != null && _receiptUrl!.isNotEmpty) ...[
               _buildReceiptCard(),
               const SizedBox(height: AppSpacing.md),
@@ -373,11 +437,6 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
   }
 
   Widget _buildTicketImageContent() {
-    // Prefer the locally stored (private) image so the ticket works offline
-    // and the image never has to be re-fetched from the network.
-    final localPath = _localImagePath;
-    final remote = _imageUrl;
-
     // Decode the ticket at display resolution so a full-page PNG ticket never
     // occupies many MB of decoded memory.
     final decodeWidth =
@@ -385,7 +444,37 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
                 MediaQuery.of(context).devicePixelRatio)
             .round();
 
-    if (localPath != null && localPath.isNotEmpty) {
+    final localPath = _localImagePath;
+    final hasLocal = localPath != null && localPath.isNotEmpty;
+    final proofUrl = _proofUrl != null && _proofUrl!.isNotEmpty
+        ? resolveMediaUrl(_proofUrl)
+        : null;
+
+    // The agent's photo of the physical ticket wins over the system ticket.
+    // When it is already cached it renders from disk (fast + offline); when it
+    // has just arrived over the socket it streams in immediately.
+    if (proofUrl != null) {
+      final cachedMatches = hasLocal && _localImageUrl == _proofUrl;
+      if (cachedMatches) {
+        return Image.file(
+          File(localPath),
+          width: double.infinity,
+          fit: BoxFit.fitWidth,
+          cacheWidth: decodeWidth,
+          errorBuilder: (_, __, ___) => _buildQrFallback(),
+        );
+      }
+      return CachedNetworkImage(
+        imageUrl: proofUrl,
+        width: double.infinity,
+        fit: BoxFit.fitWidth,
+        memCacheWidth: decodeWidth,
+        placeholder: (_, __) => _buildTicketImageLoader(),
+        errorWidget: (_, __, ___) => _buildQrFallback(),
+      );
+    }
+
+    if (hasLocal) {
       return Image.file(
         File(localPath),
         width: double.infinity,
@@ -395,30 +484,35 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
       );
     }
 
+    final remote = _imageUrl;
     if (remote != null && remote.isNotEmpty) {
       return CachedNetworkImage(
         imageUrl: remote,
         width: double.infinity,
         fit: BoxFit.fitWidth,
         memCacheWidth: decodeWidth,
-        placeholder: (_, __) => const SizedBox(
-          height: 200,
-          child: Center(
-            child: SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.5,
-                color: AppColors.primary,
-              ),
-            ),
-          ),
-        ),
+        placeholder: (_, __) => _buildTicketImageLoader(),
         errorWidget: (_, __, ___) => _buildQrFallback(),
       );
     }
 
     return _buildQrFallback();
+  }
+
+  Widget _buildTicketImageLoader() {
+    return const SizedBox(
+      height: 200,
+      child: Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(
+            strokeWidth: 2.5,
+            color: AppColors.primary,
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildQrFallback() {
@@ -697,20 +791,6 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
   }
 
   // ── Ticket Proof / Receipt ────────────────────
-
-  Widget _buildProofCard() {
-    final url = resolveMediaUrl(_proofUrl);
-    if (url == null) return const SizedBox.shrink();
-
-    return _buildMediaCard(
-      icon: Icons.verified_rounded,
-      accent: AppColors.statusCompleted,
-      title: 'Issued ticket photo',
-      subtitle: 'Photo of the physical ticket issued by the agent',
-      url: url,
-      onTap: () => _showImageDialog(url, 'Issued ticket photo'),
-    );
-  }
 
   Widget _buildReceiptCard() {
     final url = resolveMediaUrl(_receiptUrl);
