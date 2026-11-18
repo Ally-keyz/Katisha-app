@@ -3389,18 +3389,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const SizedBox(height: AppSpacing.lg),
-                _buildPaymentAmountCard(
-                  totalRwf: onlineTotal,
-                  localTotal: localTotal,
-                  currency: currency,
-                ),
-                const SizedBox(height: AppSpacing.lg),
                 if (step == 0) ...[
                   _buildLabel('Country'),
                   const SizedBox(height: AppSpacing.sm),
                   _buildCountrySelector(
                     country: country,
-                    onTap: () => _pickPaymentCountry(setModalState),
+                    onTap: () => _pickPaymentCountry(context),
                   ),
                   const SizedBox(height: AppSpacing.lg),
                   _buildLabel('Payment option'),
@@ -3483,7 +3477,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     style: AppTypography.bodyLarge,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                     decoration: _paymentInputDecoration(
-                      hint: '$prefix 7XX XXX XXX',
+                      // The country code is prefilled from the selected country,
+                      // so the field only asks for the local number.
                       prefixText: '+$prefix ',
                       prefixStyle: AppTypography.bodyLarge.copyWith(
                         color: AppColors.textSub,
@@ -3532,7 +3527,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                                 _submitBooking();
                               }
                             },
-                      style: _paymentModalButtonStyle(),
+                      style: _paymentModalButtonStyle(isPayment: true),
                       child: _isSubmitting
                           ? const SizedBox(
                               width: 20,
@@ -3583,56 +3578,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
-  Widget _buildPaymentAmountCard({
-    required int totalRwf,
-    required int localTotal,
-    required String currency,
-  }) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(AppSpacing.md),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        children: [
-          Text(
-            '${_formatAmount(localTotal)} $currency',
-            style: AppTypography.headlineMedium.copyWith(
-              color: AppColors.primary,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          if (currency != 'RWF')
-            Padding(
-              padding: const EdgeInsets.only(top: 3),
-              child: Text(
-                '≈ ${_formatAmount(totalRwf)} RWF',
-                style: AppTypography.bodySmall.copyWith(
-                  color: AppColors.textMuted,
-                ),
-              ),
-            ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            '$_seatCount ${_seatCount == 1 ? 'seat' : 'seats'}  •  '
-            '${_selectedRoute?.origin ?? ''} → ${_selectedRoute?.destination ?? ''}',
-            textAlign: TextAlign.center,
-            style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildCountrySelector({
     required PaymentCountryOption country,
     required VoidCallback onTap,
   }) {
     return Material(
-      color: AppColors.white,
+      color: AppColors.surfaceVariant,
       borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
       child: InkWell(
         onTap: onTap,
@@ -3643,8 +3594,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             vertical: 12,
           ),
           decoration: BoxDecoration(
+            color: AppColors.surfaceVariant,
             borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-            border: Border.all(color: AppColors.border),
           ),
           child: Row(
             children: [
@@ -3707,9 +3658,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     return Padding(
       padding: const EdgeInsets.only(bottom: AppSpacing.sm),
       child: Material(
-        color: selected
-            ? AppColors.primaryLight.withValues(alpha: 0.35)
-            : AppColors.white,
+        color: selected ? AppColors.surfaceVariant : AppColors.white,
         borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
         child: InkWell(
           onTap: onTap,
@@ -3719,8 +3668,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
               border: Border.all(
-                color: selected ? AppColors.primary : AppColors.border,
-                width: selected ? 1.6 : 1,
+                color: selected ? AppColors.textMuted : AppColors.border,
+                width: selected ? 1.2 : 1,
               ),
             ),
             child: Row(
@@ -3767,7 +3716,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       ? Icons.check_circle_rounded
                       : Icons.radio_button_unchecked_rounded,
                   size: 22,
-                  color: selected ? AppColors.primary : AppColors.textMuted,
+                  color: selected ? AppColors.text : AppColors.textMuted,
                 ),
               ],
             ),
@@ -3785,7 +3734,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: AppColors.surfaceVariant,
         borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
       ),
       child: Row(
@@ -3832,12 +3781,37 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
-  Future<void> _pickPaymentCountry(StateSetter setModalState) async {
-    final options = _paymentOptions;
-    if (options == null) return;
+  /// Changes the paying country.
+  ///
+  /// The country list is a plain sheet on the root navigator, while the payment
+  /// modal is a full-height dialog route. Showing the sheet on top of a dialog
+  /// made it appear *behind* the payment panel, so the payment modal is closed
+  /// first and reopened once a country is picked (or the sheet is dismissed).
+  Future<void> _pickPaymentCountry(BuildContext modalContext) async {
+    if (_paymentOptions == null) return;
 
-    final selected = await showModalBottomSheet<PaymentCountryOption>(
+    Navigator.of(modalContext, rootNavigator: true).pop();
+    // Let the close animation finish so the two sheets never overlap.
+    await Future<void>.delayed(_sheetAnimDuration);
+    if (!mounted) return;
+
+    final selected = await _showPaymentCountrySheet();
+    if (!mounted) return;
+
+    if (selected != null) _selectPaymentCountry(selected);
+    if (!mounted) return;
+    // Back to the option list: the newly selected provider is highlighted.
+    _showModal(_buildOnlinePaymentModal());
+  }
+
+  Future<PaymentCountryOption?> _showPaymentCountrySheet() {
+    final options = _paymentOptions;
+    if (options == null) return Future.value();
+
+    return showModalBottomSheet<PaymentCountryOption>(
       context: context,
+      useRootNavigator: true,
+      isScrollControlled: true,
       backgroundColor: AppColors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(
@@ -3846,79 +3820,80 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       ),
       builder: (ctx) {
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  AppSpacing.md,
-                  AppSpacing.md,
-                  AppSpacing.md,
-                  AppSpacing.sm,
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Select your country',
-                        style: AppTypography.titleMedium.copyWith(
-                          fontWeight: FontWeight.w700,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(ctx).size.height * 0.72,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    AppSpacing.md,
+                    AppSpacing.md,
+                    AppSpacing.md,
+                    AppSpacing.sm,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Select your country',
+                          style: AppTypography.titleMedium.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      icon: const Icon(Icons.close_rounded, size: 20),
-                    ),
-                  ],
+                      IconButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        icon: const Icon(Icons.close_rounded, size: 20),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: options.countries.length,
-                  itemBuilder: (_, index) {
-                    final country = options.countries[index];
-                    final active = country.code == _paymentCountry?.code;
-                    return ListTile(
-                      leading: Text(
-                        country.flagEmoji,
-                        style: const TextStyle(fontSize: 22),
-                      ),
-                      title: Text(
-                        country.name,
-                        style: AppTypography.bodyMedium.copyWith(
-                          fontWeight: FontWeight.w600,
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: options.countries.length,
+                    itemBuilder: (_, index) {
+                      final country = options.countries[index];
+                      final active = country.code == _paymentCountry?.code;
+                      return ListTile(
+                        leading: Text(
+                          country.flagEmoji,
+                          style: const TextStyle(fontSize: 22),
                         ),
-                      ),
-                      subtitle: Text(
-                        '${country.currency} · ${country.providers.length} '
-                        '${country.providers.length == 1 ? 'option' : 'options'}',
-                        style: AppTypography.bodySmall.copyWith(
-                          color: AppColors.textMuted,
+                        title: Text(
+                          country.name,
+                          style: AppTypography.bodyMedium.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      ),
-                      trailing: active
-                          ? const Icon(
-                              Icons.check_circle_rounded,
-                              color: AppColors.primary,
-                              size: 20,
-                            )
-                          : null,
-                      onTap: () => Navigator.pop(ctx, country),
-                    );
-                  },
+                        subtitle: Text(
+                          '${country.currency} · ${country.providers.length} '
+                          '${country.providers.length == 1 ? 'option' : 'options'}',
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                        trailing: active
+                            ? const Icon(
+                                Icons.check_circle_rounded,
+                                color: AppColors.primary,
+                                size: 20,
+                              )
+                            : null,
+                        onTap: () => Navigator.pop(ctx, country),
+                      );
+                    },
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },
     );
-
-    if (selected == null || !mounted) return;
-    _selectPaymentCountry(selected);
-    setModalState(() {});
   }
 
   String _paymentMethodLabel(String method) {
@@ -3941,7 +3916,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   InputDecoration _paymentInputDecoration({
-    required String hint,
+    String? hint,
     Icon? prefixIcon,
     String? prefixText,
     TextStyle? prefixStyle,
@@ -3957,7 +3932,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     }
 
     return InputDecoration(
-      hintText: hint,
+      hintText: (hint == null || hint.isEmpty) ? null : hint,
       hintStyle: AppTypography.bodyMedium.copyWith(color: AppColors.textMuted),
       prefixIcon: prefixIcon,
       prefixText: prefixText,
@@ -3973,9 +3948,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
-  ButtonStyle _paymentModalButtonStyle() {
+  /// Modal action button. [isPayment] paints the money-in action green; the
+  /// step-navigation "Continue" button stays in the brand blue.
+  ButtonStyle _paymentModalButtonStyle({bool isPayment = false}) {
     return ElevatedButton.styleFrom(
-      backgroundColor: AppColors.primary,
+      backgroundColor: isPayment ? AppColors.paymentGreen : AppColors.primary,
       foregroundColor: AppColors.white,
       disabledBackgroundColor: AppColors.textMuted,
       padding: const EdgeInsets.symmetric(vertical: 16),
