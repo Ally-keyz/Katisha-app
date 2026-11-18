@@ -19,19 +19,16 @@ class BookingRepository {
     String destination,
   ) async {
     try {
-      debugPrint('[BookingRepo] searchRoutes origin="$origin" destination="$destination"');
       final response = await _apiClient.get(
         '/routes/search',
         queryParameters: {'origin': origin, 'destination': destination},
       );
-      debugPrint('[BookingRepo] raw response.data runtime=${response.data.runtimeType} value=${response.data}');
       final data = response.data;
       final list = data is Map<String, dynamic>
           ? (data['routes'] as List<dynamic>? ??
               data['data'] as List<dynamic>? ??
               [])
           : data as List<dynamic>? ?? [];
-      debugPrint('[BookingRepo] parsed ${list.length} routes');
       final routes = list
           .map((r) => RouteModel.fromJson(r as Map<String, dynamic>))
           .toList();

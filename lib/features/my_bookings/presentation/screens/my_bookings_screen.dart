@@ -11,7 +11,6 @@ import '../../../../core/error/failures.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/media_url.dart';
 import '../../../../core/network/socket_service.dart';
-import '../../../../core/platform/badge_counts.dart';
 import '../../../../core/platform/local_ticket_store.dart';
 import '../../../../core/platform/platform_providers.dart';
 import '../../../../core/platform/screen_security.dart';
@@ -45,6 +44,10 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
   String? _error;
   StreamSubscription<SocketEvent>? _socketSub;
 
+  /// Coalesces bursts of socket events (an agent issuing five tickets emits
+  /// five events) into one refresh instead of five full page requests.
+  Timer? _reloadDebounce;
+
   MyBookingsRepository get _repo => ref.read(_myBookingsRepoProvider);
 
   @override
@@ -61,13 +64,17 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
         'booking_issued',
       };
       if (!relevant.contains(event.name)) return;
-      if (_loading) return;
-      unawaited(_fetchBookings(refresh: true, silent: true));
+      _reloadDebounce?.cancel();
+      _reloadDebounce = Timer(const Duration(milliseconds: 450), () {
+        if (!mounted || _loading) return;
+        unawaited(_fetchBookings(refresh: true, silent: true));
+      });
     });
   }
 
   @override
   void dispose() {
+    _reloadDebounce?.cancel();
     _socketSub?.cancel();
     super.dispose();
   }
@@ -77,8 +84,11 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     if (b.travelDate == null) return false;
-    final travelDate =
-        DateTime(b.travelDate!.year, b.travelDate!.month, b.travelDate!.day);
+    final travelDate = DateTime(
+      b.travelDate!.year,
+      b.travelDate!.month,
+      b.travelDate!.day,
+    );
     return !travelDate.isBefore(today);
   }
 
@@ -180,8 +190,9 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
         }
       },
       (response) async {
-        final nonExpired =
-            response.bookings.where((b) => _isTicketVisible(b) && _isNonExpired(b)).toList();
+        final nonExpired = response.bookings
+            .where((b) => _isTicketVisible(b) && _isNonExpired(b))
+            .toList();
         setState(() {
           if (_page == 1) {
             _bookings = nonExpired;
@@ -201,17 +212,16 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
         // Riverpod's "Cannot use `ref` after the widget was disposed" assert.
         final localStore = ref.read(localTicketStoreProvider);
         final api = ref.read(apiClientProvider);
-        final badges = ref.read(badgeCountsProvider.notifier);
         final bookingJson = {
           for (final booking in response.bookings)
             booking.id: _bookingToJson(booking),
         };
         unawaited(() async {
-          for (final entry in bookingJson.entries) {
-            await localStore.cacheBooking(entry.key, entry.value);
-          }
+          // One index write for the whole page instead of one per booking.
+          await localStore.cacheBookings(bookingJson);
           await _preCacheTicketImages(api, localStore, response.bookings);
-          badges.refresh();
+          // Badges are refreshed by the socket handler in main.dart; doing it
+          // here re-parsed both stores again for every page.
         }());
       },
     );
@@ -224,6 +234,10 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
     LocalTicketStore store,
     List<Booking> bookings,
   ) async {
+    // Read the URL index once for the page instead of twice per booking.
+    final cachedUrls = await store.getTicketImageUrls();
+    final saved = <String, String>{};
+
     for (final booking in bookings) {
       // The agent's photo of the physical ticket is the real ticket once it
       // exists; the system-generated image is only the pre-issue fallback.
@@ -233,23 +247,24 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
           : booking.ticketImage;
       if (primaryUrl == null || primaryUrl.isEmpty) continue;
 
-      final exists = await store.getTicketImagePath(booking.id);
-      final cachedUrl = await store.getTicketImageUrl(booking.id);
-      if (exists != null && cachedUrl == primaryUrl) continue;
+      // A matching URL means the file was saved successfully before.
+      if (cachedUrls[booking.id] == primaryUrl) continue;
       try {
         final response = await api.downloadBytes(
           resolveMediaUrl(primaryUrl) ?? primaryUrl,
         );
         final data = response.data;
         if (data is List<int>) {
-          await store.saveTicketImage(
+          final path = await store.saveTicketImage(
             booking.id,
             Uint8List.fromList(data),
           );
-          await store.setTicketImageUrl(booking.id, primaryUrl);
+          if (path != null) saved[booking.id] = primaryUrl;
         }
       } catch (_) {}
     }
+
+    await store.setTicketImageUrls(saved);
   }
 
   Map<String, dynamic> _bookingToJson(Booking booking) {
@@ -290,9 +305,7 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
 
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: KatishaAppBar(
-        title: l10n.translate('my_bookings'),
-      ),
+      appBar: KatishaAppBar(title: l10n.translate('my_bookings')),
       body: _buildBody(l10n),
     );
   }
@@ -431,8 +444,9 @@ class _MyBookingsScreenState extends ConsumerState<MyBookingsScreen> {
                               child: SizedBox(
                                 width: 24,
                                 height: 24,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               ),
                             ),
                           );
@@ -609,7 +623,7 @@ class _BookingCard extends StatelessWidget {
     final l10n = AppLocalizations.of(context);
     final dateStr = booking.travelDate != null
         ? _cardDateFormat.format(booking.travelDate!)
-        : '—';
+        : 'â€”';
     final isIssued = booking.status == 'issued';
     final status = booking.status;
 
@@ -678,7 +692,9 @@ class _BookingCard extends StatelessWidget {
                     // Status badge
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 3),
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
                         color: _statusBgColor(status),
                         borderRadius: BorderRadius.circular(6),
@@ -710,11 +726,13 @@ class _BookingCard extends StatelessWidget {
                   children: [
                     _MetaChip(
                       icon: Icons.calendar_today_rounded,
-                      label: '$dateStr${booking.travelTime != null && booking.travelTime!.isNotEmpty ? ' · ${booking.travelTime}' : ''}',
+                      label:
+                          '$dateStr${booking.travelTime != null && booking.travelTime!.isNotEmpty ? ' Â· ${booking.travelTime}' : ''}',
                     ),
                     _MetaChip(
                       icon: Icons.event_seat_rounded,
-                      label: '${booking.seats} seat${booking.seats > 1 ? 's' : ''}',
+                      label:
+                          '${booking.seats} seat${booking.seats > 1 ? 's' : ''}',
                     ),
                     if (booking.agency != null &&
                         booking.agency!.name.isNotEmpty)
@@ -741,9 +759,7 @@ class _BookingCard extends StatelessWidget {
                       size: 15,
                     ),
                     label: Text(
-                      isIssued
-                          ? l10n.translate('view_ticket')
-                          : 'View receipt',
+                      isIssued ? l10n.translate('view_ticket') : 'View receipt',
                     ),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: AppColors.primary,
@@ -950,8 +966,7 @@ class _TicketModalState extends ConsumerState<_TicketModal> {
     final ticketHeight = screenSize.height * 0.78;
 
     final localImagePath = _localImagePath;
-    final hasLocalImage =
-        localImagePath != null && localImagePath.isNotEmpty;
+    final hasLocalImage = localImagePath != null && localImagePath.isNotEmpty;
     final proofUrl = widget.booking.ticketProofImage;
     final ticketImage = (proofUrl != null && proofUrl.isNotEmpty)
         ? proofUrl
@@ -976,9 +991,7 @@ class _TicketModalState extends ConsumerState<_TicketModal> {
                       // Ticket container with shadow
                       Container(
                         width: ticketWidth,
-                        constraints: BoxConstraints(
-                          maxHeight: ticketHeight,
-                        ),
+                        constraints: BoxConstraints(maxHeight: ticketHeight),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(20),
@@ -996,24 +1009,26 @@ class _TicketModalState extends ConsumerState<_TicketModal> {
                                 File(localImagePath),
                                 fit: BoxFit.fitWidth,
                                 alignment: Alignment.topCenter,
-                                cacheWidth: (ticketWidth *
-                                        MediaQuery.of(context)
-                                            .devicePixelRatio)
-                                    .round(),
+                                cacheWidth:
+                                    (ticketWidth *
+                                            MediaQuery.of(
+                                              context,
+                                            ).devicePixelRatio)
+                                        .round(),
                                 errorBuilder: (_, __, ___) =>
                                     _buildModalImageLoad(),
                               )
                             : CachedNetworkImage(
-                                imageUrl:
-                                    resolveMediaUrl(ticketImage) ?? '',
+                                imageUrl: resolveMediaUrl(ticketImage) ?? '',
                                 fit: BoxFit.fitWidth,
                                 alignment: Alignment.topCenter,
-                                memCacheWidth: (ticketWidth *
-                                        MediaQuery.of(context)
-                                            .devicePixelRatio)
-                                    .toInt(),
-                                placeholder: (_, __) =>
-                                    _buildModalImageLoad(),
+                                memCacheWidth:
+                                    (ticketWidth *
+                                            MediaQuery.of(
+                                              context,
+                                            ).devicePixelRatio)
+                                        .toInt(),
+                                placeholder: (_, __) => _buildModalImageLoad(),
                                 errorWidget: (_, __, ___) =>
                                     _buildModalImageError(),
                               ),
@@ -1025,7 +1040,9 @@ class _TicketModalState extends ConsumerState<_TicketModal> {
                       Container(
                         width: ticketWidth,
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 14),
+                          horizontal: 20,
+                          vertical: 14,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(12),
@@ -1056,8 +1073,9 @@ class _TicketModalState extends ConsumerState<_TicketModal> {
                             const SizedBox(width: 10),
                             Flexible(
                               child: Text(
-                                AppLocalizations.of(context)
-                                    .translate('show_ticket_officer'),
+                                AppLocalizations.of(
+                                  context,
+                                ).translate('show_ticket_officer'),
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                   color: AppColors.text,

@@ -32,6 +32,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _submitting = false;
   String? _error;
 
+  /// The login form's input theme, built once instead of on every keystroke.
+  ThemeData? _formTheme;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _formTheme ??= Theme.of(context).copyWith(
+      inputDecorationTheme: _loginInputTheme(),
+    );
+  }
+
   @override
   void dispose() {
     _identifierController.dispose();
@@ -116,9 +127,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               child: Form(
                 key: _formKey,
                 child: Theme(
-                  data: Theme.of(context).copyWith(
-                    inputDecorationTheme: _loginInputTheme(),
-                  ),
+                  // Built once in didChangeDependencies, not per keystroke.
+                  data: _formTheme!,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [

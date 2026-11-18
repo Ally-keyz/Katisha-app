@@ -52,8 +52,8 @@ class TicketSyncService {
         final body = response.data;
         final data = (body is Map<String, dynamic>)
             ? (body['data'] is Map<String, dynamic>
-                ? body['data'] as Map<String, dynamic>
-                : body)
+                  ? body['data'] as Map<String, dynamic>
+                  : body)
             : const <String, dynamic>{};
         final bookings = (data['bookings'] as List<dynamic>?) ?? const [];
         final pages = (data['pages'] as int?) ?? 1;
@@ -61,13 +61,21 @@ class TicketSyncService {
         // Download ticket images in small parallel batches (bounded concurrency
         // of 4) so lots of tickets sync fast without spiking memory.
         final imageDownloads = <Future<void>>[];
+        final downloaded = <String, String>{};
+        // One index read per page instead of one per booking.
+        final cachedImageUrls = await _store.getTicketImageUrls();
+        final pageEntries = <String, Map<String, dynamic>>{};
+
         for (final raw in bookings) {
           if (raw is! Map<String, dynamic>) continue;
           final id = raw['_id'] as String? ?? raw['id'] as String?;
           if (id == null || id.isEmpty) continue;
-          await _store.cacheBooking(id, raw);
+          pageEntries[id] = raw;
 
-          await _syncJourneyAlerts(id, raw);
+          // A single failing alarm must not cost the page its cache write.
+          try {
+            await _syncJourneyAlerts(id, raw);
+          } catch (_) {}
 
           // Once the agent has photographed the physical ticket, that photo is
           // the real ticket and replaces the system-generated image everywhere.
@@ -78,10 +86,14 @@ class TicketSyncService {
               : ticketUrl;
           if (primaryUrl == null || primaryUrl.isEmpty) continue;
 
-          final cachedUrl = await _store.getTicketImageUrl(id);
-          final hasImage = await _store.getTicketImagePath(id) != null;
-          if (hasImage && cachedUrl == primaryUrl) continue;
-          imageDownloads.add(_downloadImage(id, primaryUrl));
+          // The URL is only recorded after a successful save, so a matching URL
+          // means the file is already on disk - no stat needed.
+          if (cachedImageUrls[id] == primaryUrl) continue;
+          imageDownloads.add(
+            _downloadImage(id, primaryUrl).then((ok) {
+              if (ok) downloaded[id] = primaryUrl;
+            }),
+          );
           if (imageDownloads.length >= 4) {
             await Future.wait(imageDownloads);
             imageDownloads.clear();
@@ -90,6 +102,10 @@ class TicketSyncService {
         if (imageDownloads.isNotEmpty) {
           await Future.wait(imageDownloads);
         }
+
+        // Persist the page's bookings and image URLs in two writes total.
+        await _store.cacheBookings(pageEntries);
+        await _store.setTicketImageUrls(downloaded);
 
         page++;
         if (page > pages) break;
@@ -129,8 +145,7 @@ class TicketSyncService {
 
     await _notifications.scheduleJourneyAlerts(
       bookingId: bookingId,
-      routeName:
-          '${raw['origin'] ?? ''} → ${raw['destination'] ?? ''}',
+      routeName: '${raw['origin'] ?? ''} → ${raw['destination'] ?? ''}',
       departureTime: departure,
     );
     _scheduledAlerts[bookingId] = marker;
@@ -152,17 +167,21 @@ class TicketSyncService {
     return DateTime(date.year, date.month, date.day, hour, minute);
   }
 
-  Future<void> _downloadImage(String bookingId, String imageUrl) async {
+  Future<bool> _downloadImage(String bookingId, String imageUrl) async {
     try {
       final response = await _api.downloadBytes(
         resolveMediaUrl(imageUrl) ?? imageUrl,
       );
       final data = response.data;
       if (data is List<int>) {
-        await _store.saveTicketImage(bookingId, Uint8List.fromList(data));
-        await _store.setTicketImageUrl(bookingId, imageUrl);
+        final saved = await _store.saveTicketImage(
+          bookingId,
+          Uint8List.fromList(data),
+        );
+        return saved != null;
       }
     } catch (_) {}
+    return false;
   }
 }
 

@@ -33,10 +33,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: '/onboarding',
         builder: (context, state) => const OnboardingScreen(),
       ),
-      GoRoute(
-        path: '/login',
-        builder: (context, state) => const LoginScreen(),
-      ),
+      GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
 
       // ── Agent portal (assigned-route field agents) ───────────────────────
       GoRoute(
@@ -56,15 +53,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: '/my-bookings',
-            pageBuilder: (context, state) => const NoTransitionPage(
-              child: MyBookingsScreen(),
-            ),
+            pageBuilder: (context, state) =>
+                const NoTransitionPage(child: MyBookingsScreen()),
           ),
           GoRoute(
             path: '/notifications',
-            pageBuilder: (context, state) => const NoTransitionPage(
-              child: NotificationsScreen(),
-            ),
+            pageBuilder: (context, state) =>
+                const NoTransitionPage(child: NotificationsScreen()),
           ),
         ],
       ),
@@ -106,22 +101,20 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 });
 
 /// Shell widget for the User role with bottom navigation.
-class UserHomeShell extends ConsumerWidget {
+class UserHomeShell extends StatelessWidget {
   final Widget child;
   const UserHomeShell({super.key, required this.child});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final paths = _userPaths;
     final currentIndex = _getCurrentIndex(context, paths);
 
     return Scaffold(
       body: child,
-      bottomNavigationBar: _buildBottomNav(
-        context: context,
+      bottomNavigationBar: _BottomNavBar(
         currentIndex: currentIndex < 0 ? 0 : currentIndex,
         paths: paths,
-        ref: ref,
       ),
     );
   }
@@ -133,71 +126,77 @@ class UserHomeShell extends ConsumerWidget {
 }
 
 /// Builds the platform-adaptive bottom navigation bar.
-Widget _buildBottomNav({
-  required BuildContext context,
-  required int currentIndex,
-  required List<String> paths,
-  required WidgetRef ref,
-}) {
-  // Live badge counts (tickets + notifications) that update automatically.
-  final badgeCounts = ref.watch(badgeCountsProvider);
-  // Resolved once: this runs on every shell rebuild, and each destination used
-  // to do its own Localizations lookup.
-  final l10n = AppLocalizations.of(context);
+///
+/// This is its own [ConsumerWidget] so a badge change rebuilds only the bar,
+/// not the whole [Scaffold] that hosts the active screen.
+class _BottomNavBar extends ConsumerWidget {
+  final int currentIndex;
+  final List<String> paths;
 
-  return NavigationBar(
-    selectedIndex: currentIndex,
-    onDestinationSelected: (index) => context.go(paths[index]),
-    backgroundColor: Colors.white,
-    elevation: 0,
-    labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-    indicatorColor: const Color(0xFFDBEAFE),
-    indicatorShape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(4),
-    ),
-    surfaceTintColor: Colors.transparent,
-    destinations: [
-      NavigationDestination(
-        icon: const Icon(Icons.home_outlined),
-        selectedIcon: const Icon(Icons.home),
-        label: l10n.translate('nav_home'),
+  const _BottomNavBar({required this.currentIndex, required this.paths});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Live badge counts (tickets + notifications) that update automatically.
+    final badgeCounts = ref.watch(badgeCountsProvider);
+    // Resolved once: this runs on every shell rebuild, and each destination used
+    // to do its own Localizations lookup.
+    final l10n = AppLocalizations.of(context);
+
+    return NavigationBar(
+      selectedIndex: currentIndex,
+      onDestinationSelected: (index) => context.go(paths[index]),
+      backgroundColor: Colors.white,
+      elevation: 0,
+      labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+      indicatorColor: const Color(0xFFDBEAFE),
+      indicatorShape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(4),
       ),
-      NavigationDestination(
-        icon: _BadgeIcon(
-          icon: Icons.confirmation_num_outlined,
-          selectedIcon: Icons.confirmation_num,
-          selected: false,
-          count: badgeCounts.ticketCount,
-          color: const Color(0xFF0854AE),
+      surfaceTintColor: Colors.transparent,
+      destinations: [
+        NavigationDestination(
+          icon: const Icon(Icons.home_outlined),
+          selectedIcon: const Icon(Icons.home),
+          label: l10n.translate('nav_home'),
         ),
-        selectedIcon: _BadgeIcon(
-          icon: Icons.confirmation_num_outlined,
-          selectedIcon: Icons.confirmation_num,
-          selected: true,
-          count: badgeCounts.ticketCount,
-          color: const Color(0xFF0854AE),
+        NavigationDestination(
+          icon: _BadgeIcon(
+            icon: Icons.confirmation_num_outlined,
+            selectedIcon: Icons.confirmation_num,
+            selected: false,
+            count: badgeCounts.ticketCount,
+            color: const Color(0xFF0854AE),
+          ),
+          selectedIcon: _BadgeIcon(
+            icon: Icons.confirmation_num_outlined,
+            selectedIcon: Icons.confirmation_num,
+            selected: true,
+            count: badgeCounts.ticketCount,
+            color: const Color(0xFF0854AE),
+          ),
+          label: l10n.translate('nav_my_tickets'),
         ),
-        label: l10n.translate('nav_my_tickets'),
-      ),
-      NavigationDestination(
-        icon: _BadgeIcon(
-          icon: Icons.notifications_outlined,
-          selectedIcon: Icons.notifications,
-          selected: false,
-          count: badgeCounts.notificationCount,
-          color: Colors.red,
+        NavigationDestination(
+          icon: _BadgeIcon(
+            icon: Icons.notifications_outlined,
+            selectedIcon: Icons.notifications,
+            selected: false,
+            count: badgeCounts.notificationCount,
+            color: Colors.red,
+          ),
+          selectedIcon: _BadgeIcon(
+            icon: Icons.notifications_outlined,
+            selectedIcon: Icons.notifications,
+            selected: true,
+            count: badgeCounts.notificationCount,
+            color: Colors.red,
+          ),
+          label: l10n.translate('nav_alerts'),
         ),
-        selectedIcon: _BadgeIcon(
-          icon: Icons.notifications_outlined,
-          selectedIcon: Icons.notifications,
-          selected: true,
-          count: badgeCounts.notificationCount,
-          color: Colors.red,
-        ),
-        label: l10n.translate('nav_alerts'),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 /// Icon widget for a bottom-nav destination that shows a badge with a count.
@@ -235,10 +234,7 @@ class _BadgeIcon extends StatelessWidget {
                 color: color,
                 borderRadius: BorderRadius.circular(9),
               ),
-              constraints: const BoxConstraints(
-                minWidth: 18,
-                minHeight: 16,
-              ),
+              constraints: const BoxConstraints(minWidth: 18, minHeight: 16),
               alignment: Alignment.center,
               child: Text(
                 displayed,

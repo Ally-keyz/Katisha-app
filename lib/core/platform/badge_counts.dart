@@ -2,9 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../network/api_client.dart';
 import 'platform_providers.dart';
-import 'ticket_sync_service.dart';
 
 /// Holds the live counts shown as red badges on the bottom navigation bar.
 ///
@@ -14,10 +12,7 @@ class BadgeCounts {
   final int ticketCount;
   final int notificationCount;
 
-  const BadgeCounts({
-    this.ticketCount = 0,
-    this.notificationCount = 0,
-  });
+  const BadgeCounts({this.ticketCount = 0, this.notificationCount = 0});
 }
 
 class BadgeCountsNotifier extends Notifier<BadgeCounts> {
@@ -25,24 +20,14 @@ class BadgeCountsNotifier extends Notifier<BadgeCounts> {
 
   @override
   BadgeCounts build() {
-    // Kick off a full background sync on first build (which also refreshes the
-    // counts via the ticket sync service) so badge values stay accurate.
+    // Counts are derived from the local stores only. The network sync is kicked
+    // off by the splash screen; doing it here meant merely *watching* a badge
+    // could start a full multi-page ticket download.
     if (!_firstRefreshDone) {
       _firstRefreshDone = true;
-      unawaited(_syncAndRefresh());
+      unawaited(_refresh());
     }
     return const BadgeCounts();
-  }
-
-  Future<void> _syncAndRefresh() async {
-    final api = ref.read(apiClientProvider);
-    if (!api.isAuthenticated) {
-      await _refresh();
-      return;
-    }
-    final service = ref.read(ticketSyncServiceProvider);
-    await service.syncAllTickets();
-    await _refresh();
   }
 
   Future<void> _refresh() async {

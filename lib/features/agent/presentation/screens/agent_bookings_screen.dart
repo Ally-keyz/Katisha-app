@@ -29,6 +29,7 @@ final _dateFormat = DateFormat('EEE, d MMM yyyy');
 final _numericDateFormat = DateFormat('dd/MM/yyyy');
 final _shortDateFormat = DateFormat('d MMM');
 final _amountFormat = NumberFormat.decimalPattern();
+final _whitespace = RegExp(r'\s+');
 
 // ── Local design tokens ─────────────────────────────────────────────────────
 // Neutral, borderless surfaces. Structure comes from tone and spacing, not
@@ -142,11 +143,18 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
   bool _needsAttention(Booking booking) =>
       booking.paymentStatus == 'paid' && !_hasProof(booking);
 
-  int get _attentionCount => _bookings.where(_needsAttention).length;
+  /// Derived views, recomputed only when the data or the filter changes.
+  /// Previously these were getters, so each rebuild rescanned and reallocated
+  /// the 100-row list four or five times.
+  int _attentionCount = 0;
+  List<Booking> _visibleBookings = const <Booking>[];
 
-  List<Booking> get _visibleBookings => _attentionOnly
-      ? _bookings.where(_needsAttention).toList(growable: false)
-      : _bookings;
+  void _recomputeDerived() {
+    _attentionCount = _bookings.where(_needsAttention).length;
+    _visibleBookings = _attentionOnly
+        ? _bookings.where(_needsAttention).toList(growable: false)
+        : _bookings;
+  }
 
   @override
   void initState() {
@@ -223,6 +231,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
           ..sort(_compareBookings);
         setState(() {
           _bookings = active;
+          _recomputeDerived();
           _loading = false;
           _error = null;
         });
@@ -601,7 +610,9 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     final settingsTab = _tab == 1;
     // An alarm tap can carry a booking id; open it as soon as it is available.
     _captureDeepLinkBooking();
-    if (!_loading) {
+    // Only queue the callback when something is actually waiting, instead of
+    // scheduling one on every frame this screen builds.
+    if (!_loading && _pendingBookingId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _openPendingBooking();
       });
@@ -691,7 +702,10 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
           onPressed: count == 0 && !active
               ? null
               : () {
-                  setState(() => _attentionOnly = !_attentionOnly);
+                  setState(() {
+                    _attentionOnly = !_attentionOnly;
+                    _recomputeDerived();
+                  });
                 },
           icon: Icon(
             active ? Icons.flag_rounded : Icons.flag_outlined,
@@ -782,9 +796,9 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
         : (user?.username.trim().isNotEmpty == true
               ? user!.username.trim()
               : 'Agent');
-    final firstName = rawName.split(RegExp(r'\s+')).first;
+    final firstName = rawName.split(_whitespace).first;
     final initials = rawName
-        .split(RegExp(r'\s+'))
+        .split(_whitespace)
         .where((part) => part.isNotEmpty)
         .take(2)
         .map((part) => part.characters.first.toUpperCase())
@@ -927,7 +941,10 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
             ),
           ),
           GestureDetector(
-            onTap: () => setState(() => _attentionOnly = false),
+            onTap: () => setState(() {
+              _attentionOnly = false;
+              _recomputeDerived();
+            }),
             child: Text(
               'Show all',
               style: AppTypography.labelMedium.copyWith(
@@ -1766,7 +1783,7 @@ class _BookingDetailsSheetState extends ConsumerState<_BookingDetailsSheet> {
               _booking.user?.phone ??
               '');
     final initials = name
-        .split(RegExp(r'\s+'))
+        .split(_whitespace)
         .where((part) => part.isNotEmpty)
         .take(2)
         .map((part) => part.characters.first.toUpperCase())

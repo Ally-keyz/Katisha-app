@@ -185,6 +185,10 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   bool _loadingPaymentOptions = false;
   String? _paymentOptionsError;
 
+  /// Set once the traveller picks a country by hand, so a late GPS fix cannot
+  /// silently change the country they chose.
+  bool _paymentCountryTouched = false;
+
   // Payment modal state (matches web flow: summary -> green button ->
   // Pay Online modal)
   bool _isLoggedIn = false;
@@ -218,6 +222,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   late AnimationController _progressAnimController;
   late AnimationController _confirmAnimController;
+  late final Animation<double> _confirmScale;
   late AnimationController _blinkController;
   bool _blinkSyncScheduled = false;
   final _departureTimeKey = GlobalKey();
@@ -235,6 +240,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     _confirmAnimController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
+    );
+    // Created once: a CurvedAnimation built in build() registers a status
+    // listener on the controller every rebuild and is never disposed.
+    _confirmScale = CurvedAnimation(
+      parent: _confirmAnimController,
+      curve: Curves.elasticOut,
     );
     _progressAnimController.forward();
 
@@ -264,16 +275,17 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   /// Asks the OS for location access immediately when the booking screen
   /// opens. There is no extra in-app explanation step: Android/iOS show their
   /// own permission dialog, and an already-granted permission is reused.
+  ///
+  /// Only the permission round-trip is awaited (it is instant once granted).
+  /// The GPS fix is resolved in the background, so the destination picker the
+  /// traveller is waiting for is never held up by a slow satellite lock.
   Future<void> _requestLocation() async {
     final service = ref.read(locationServiceProvider);
     final access = await service.ensureAccess();
     if (!mounted) return;
 
     if (access == LocationAccess.granted) {
-      final location = await service.currentLocation();
-      if (location != null && mounted) {
-        setState(() => _deviceLocation = location);
-      }
+      unawaited(_resolveLocation(service));
       return;
     }
 
@@ -307,6 +319,30 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         ),
       ),
     );
+  }
+
+  /// Fills in the device country once the GPS fix lands. Nobody is blocked on
+  /// this: the picker is already open and the prices simply refine when the
+  /// location arrives.
+  Future<void> _resolveLocation(LocationService service) async {
+    final location = await service.currentLocation();
+    if (location == null || !mounted) return;
+
+    setState(() {
+      _deviceLocation = location;
+      // Refine the paying country from the actual fix, but never override a
+      // choice the traveller made by hand.
+      if (!_paymentCountryTouched) {
+        final match = _paymentOptions?.countryByCode(location.countryIso2);
+        if (match != null && match.code != _paymentCountry?.code) {
+          _paymentCountry = match;
+          _paymentProvider = match.providers.isNotEmpty
+              ? match.providers.first
+              : null;
+          _paymentMethod = _paymentProvider?.method ?? 'mom';
+        }
+      }
+    });
   }
 
   /// Opens the destination picker automatically when the wizard starts on the
@@ -3068,6 +3104,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
   void _selectPaymentCountry(PaymentCountryOption country) {
     setState(() {
+      _paymentCountryTouched = true;
       _paymentCountry = country;
       _paymentProvider = country.providers.isNotEmpty
           ? country.providers.first
@@ -3268,6 +3305,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       return;
     }
     _isLoggedIn = true;
+    if (_cachedUserName == null || _cachedUserName!.isEmpty) {
+      // The session already fetched this profile at startup; reuse it instead
+      // of issuing another /auth/profile round-trip.
+      final sessionName = ref.read(sessionProvider)?.name?.trim() ?? '';
+      if (sessionName.isNotEmpty) _cachedUserName = sessionName;
+    }
     if (_cachedUserName != null && _cachedUserName!.isNotEmpty) {
       if (_guestNameController.text.isEmpty) {
         _guestNameController.text = _cachedUserName!;
@@ -3857,6 +3900,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 ),
                 Flexible(
                   child: ListView.builder(
+                    // Only a dozen countries ship here, so building them all is
+                    // cheap and lets the sheet size to its content instead of
+                    // always occupying the full 72% height.
                     shrinkWrap: true,
                     itemCount: options.countries.length,
                     itemBuilder: (_, index) {
@@ -4108,10 +4154,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   ScaleTransition(
-                    scale: CurvedAnimation(
-                      parent: _confirmAnimController,
-                      curve: Curves.elasticOut,
-                    ),
+                    scale: _confirmScale,
                     child: Container(
                       width: 80,
                       height: 80,

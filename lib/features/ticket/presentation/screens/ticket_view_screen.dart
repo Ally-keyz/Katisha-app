@@ -11,7 +11,6 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/media_url.dart';
 import '../../../../core/network/socket_service.dart';
-import '../../../../core/platform/badge_counts.dart';
 import '../../../../core/platform/local_ticket_store.dart';
 import '../../../../core/platform/platform_providers.dart';
 import '../../../../core/platform/screen_security.dart';
@@ -24,6 +23,10 @@ import '../../../my_bookings/data/my_bookings_repository.dart';
 final _myBookingsRepoProvider = Provider<MyBookingsRepository>((ref) {
   return MyBookingsRepository(ref.read(apiClientProvider));
 });
+
+/// Hoisted: constructing a DateFormat parses its pattern, and this ran on every
+/// rebuild of the ticket header.
+final _travelDateFormat = DateFormat('dd MMM yyyy');
 
 class TicketViewScreen extends ConsumerStatefulWidget {
   final String bookingId;
@@ -47,6 +50,10 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
   Map<String, dynamic>? _ticketData;
   StreamSubscription<SocketEvent>? _socketSub;
 
+  /// Coalesces rapid ticket events (status + upload arrive together) into one
+  /// reload instead of one network round-trip per event.
+  Timer? _reloadDebounce;
+
   @override
   void initState() {
     super.initState();
@@ -56,6 +63,7 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
 
   @override
   void dispose() {
+    _reloadDebounce?.cancel();
     _socketSub?.cancel();
     ScreenSecurity.disable();
     super.dispose();
@@ -72,7 +80,11 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
       if (data is! Map<String, dynamic>) return;
       final id = data['bookingId']?.toString();
       if (id != null && id.isNotEmpty && id != widget.bookingId) return;
-      unawaited(_loadTicket(silent: true, announce: true));
+      _reloadDebounce?.cancel();
+      _reloadDebounce = Timer(const Duration(milliseconds: 450), () {
+        if (!mounted) return;
+        unawaited(_loadTicket(silent: true, announce: true));
+      });
     });
   }
 
@@ -88,9 +100,10 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
 
     // 1) Show locally cached ticket immediately (works offline).
     final localStore = ref.read(localTicketStoreProvider);
-    final cached = await localStore.getBooking(widget.bookingId);
-    final localImage = await localStore.getTicketImagePath(widget.bookingId);
-    final localImageUrl = await localStore.getTicketImageUrl(widget.bookingId);
+    final snapshot = await localStore.getTicketSnapshot(widget.bookingId);
+    final cached = snapshot.booking;
+    final localImage = snapshot.imagePath;
+    final localImageUrl = snapshot.imageUrl;
     if (!mounted) return;
     if (cached != null && !silent) {
       setState(() {
@@ -142,12 +155,9 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
         final primaryUrl = (proofUrl != null && proofUrl.isNotEmpty)
             ? proofUrl
             : imageUrl;
-        final cachedImageUrl = await localStore.getTicketImageUrl(
-          widget.bookingId,
-        );
         if (primaryUrl != null &&
             primaryUrl.isNotEmpty &&
-            primaryUrl != cachedImageUrl) {
+            primaryUrl != localImageUrl) {
           unawaited(_downloadPrivateImage(localStore, primaryUrl));
         }
 
@@ -186,8 +196,6 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
               ),
             );
         }
-
-        ref.read(badgeCountsProvider.notifier).refresh();
       },
     );
   }
@@ -661,7 +669,7 @@ class _TicketViewScreenState extends ConsumerState<TicketViewScreen> {
         ? DateTime.tryParse(data['travelDate'])
         : null;
     final dateStr = travelDate != null
-        ? DateFormat('dd MMM yyyy').format(travelDate)
+        ? _travelDateFormat.format(travelDate)
         : '\u2014';
     final time = data['travelTime'] as String? ?? '\u2014';
     final seats = '${data['seats'] ?? '\u2014'}';

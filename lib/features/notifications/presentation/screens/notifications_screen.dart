@@ -77,7 +77,8 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       (failure) {
         // An expired/invalid session behaves like the signed-out state: show
         // the empty "no notifications" screen instead of an error.
-        if (failure is AuthFailure || !ref.read(apiClientProvider).isAuthenticated) {
+        if (failure is AuthFailure ||
+            !ref.read(apiClientProvider).isAuthenticated) {
           setState(() {
             _error = null;
             _loading = false;
@@ -96,8 +97,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         // Reading the store decodes every persisted record, so doing it on each
         // appended page parsed the whole cache and then discarded the result.
         if (_page == 1) {
-          final local =
-              await ref.read(localNotificationStoreProvider).getAll();
+          final local = await ref.read(localNotificationStoreProvider).getAll();
           if (!mounted) return;
           setState(() {
             _notifications = [...local, ...response.notifications];
@@ -128,27 +128,31 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       (_) => setState(() {
         _markingRead = false;
         _notifications = _notifications
-            .map((n) => NotificationModel(
-                  id: n.id,
-                  title: n.title,
-                  message: n.message,
-                  type: n.type,
-                  read: true,
-                  createdAt: n.createdAt,
-                ))
+            .map(
+              (n) => NotificationModel(
+                id: n.id,
+                title: n.title,
+                message: n.message,
+                type: n.type,
+                read: true,
+                createdAt: n.createdAt,
+              ),
+            )
             .toList();
       }),
       (_) => setState(() {
         _markingRead = false;
         _notifications = _notifications
-            .map((n) => NotificationModel(
-                  id: n.id,
-                  title: n.title,
-                  message: n.message,
-                  type: n.type,
-                  read: true,
-                  createdAt: n.createdAt,
-                ))
+            .map(
+              (n) => NotificationModel(
+                id: n.id,
+                title: n.title,
+                message: n.message,
+                type: n.type,
+                read: true,
+                createdAt: n.createdAt,
+              ),
+            )
             .toList();
       }),
     );
@@ -188,8 +192,9 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     }
     if (!mounted) return;
     setState(() {
-      _notifications =
-          _notifications.where((n) => n.id != notification.id).toList();
+      _notifications = _notifications
+          .where((n) => n.id != notification.id)
+          .toList();
     });
   }
 
@@ -220,8 +225,9 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                     )
                   : Text(
                       l10n.translate('mark_all_read'),
-                      style: AppTypography.labelLarge
-                          .copyWith(color: AppColors.primary),
+                      style: AppTypography.labelLarge.copyWith(
+                        color: AppColors.primary,
+                      ),
                     ),
             ),
         ],
@@ -243,13 +249,11 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       return _buildEmptyState(l10n);
     }
 
-    final itemCount =
-        _notifications.length + (_hasMore ? 1 : 0);
+    final itemCount = _notifications.length + (_hasMore ? 1 : 0);
 
     return Column(
       children: [
-        if (unread > 0)
-          _buildUnreadBanner(l10n, unread),
+        if (unread > 0) _buildUnreadBanner(l10n, unread),
         Expanded(
           child: RefreshIndicator(
             color: AppColors.primary,
@@ -263,7 +267,8 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                   vertical: AppSpacing.sm,
                 ),
                 itemCount: itemCount,
-                separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.xs),
+                separatorBuilder: (_, __) =>
+                    const SizedBox(height: AppSpacing.xs),
                 itemBuilder: (context, index) {
                   if (index == _notifications.length) {
                     // `_loadMore` mutates state and triggers a fetch that calls
@@ -273,32 +278,46 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                     // rebuild.
                     return _buildLoadMoreIndicator();
                   }
-                final notification = _notifications[index];
-                return Dismissible(
-                  key: ValueKey(notification.id),
-                  direction: DismissDirection.horizontal,
-                  background: Container(
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                    decoration: BoxDecoration(
-                      color: AppColors.error,
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                  final notification = _notifications[index];
+                  return Dismissible(
+                    key: ValueKey(notification.id),
+                    direction: DismissDirection.horizontal,
+                    background: Container(
+                      alignment: Alignment.centerRight,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.lg,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.error,
+                        borderRadius: BorderRadius.circular(
+                          AppSpacing.radiusMd,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.delete_outline,
+                        color: AppColors.white,
+                      ),
                     ),
-                    child: const Icon(Icons.delete_outline, color: AppColors.white),
-                  ),
-                  secondaryBackground: Container(
-                    alignment: Alignment.centerLeft,
-                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-                    decoration: BoxDecoration(
-                      color: AppColors.error,
-                      borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+                    secondaryBackground: Container(
+                      alignment: Alignment.centerLeft,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: AppSpacing.lg,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.error,
+                        borderRadius: BorderRadius.circular(
+                          AppSpacing.radiusMd,
+                        ),
+                      ),
+                      child: const Icon(
+                        Icons.delete_outline,
+                        color: AppColors.white,
+                      ),
                     ),
-                    child: const Icon(Icons.delete_outline, color: AppColors.white),
-                  ),
-                  onDismissed: (_) => _dismissNotification(notification),
-                  child: _NotificationTile(notification: notification),
-                );
-              },
+                    onDismissed: (_) => _dismissNotification(notification),
+                    child: _NotificationTile(notification: notification),
+                  );
+                },
               ),
             ),
           ),
@@ -316,9 +335,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       ),
       decoration: const BoxDecoration(
         color: AppColors.primaryLight,
-        border: Border(
-          bottom: BorderSide(color: AppColors.border),
-        ),
+        border: Border(bottom: BorderSide(color: AppColors.border)),
       ),
       child: Row(
         children: [
@@ -330,9 +347,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
           const SizedBox(width: AppSpacing.sm),
           Text(
             '${unread} ${unread == 1 ? l10n.translate('unread_notification') : l10n.translate('unread_notifications')}',
-            style: AppTypography.labelLarge.copyWith(
-              color: AppColors.primary,
-            ),
+            style: AppTypography.labelLarge.copyWith(color: AppColors.primary),
           ),
         ],
       ),
@@ -375,8 +390,9 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
             Text(
               _error!,
               textAlign: TextAlign.center,
-              style: AppTypography.bodyMedium
-                  .copyWith(color: AppColors.textSub),
+              style: AppTypography.bodyMedium.copyWith(
+                color: AppColors.textSub,
+              ),
             ),
             const SizedBox(height: AppSpacing.lg),
             FilledButton.icon(
@@ -388,8 +404,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
                   vertical: AppSpacing.sm + AppSpacing.xs,
                 ),
                 shape: RoundedRectangleBorder(
-                  borderRadius:
-                      BorderRadius.circular(AppSpacing.radiusMd),
+                  borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
                 ),
               ),
               icon: const Icon(Icons.refresh, size: 18),
@@ -425,15 +440,17 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
             const SizedBox(height: AppSpacing.lg),
             Text(
               l10n.translate('no_notifications'),
-              style: AppTypography.titleMedium
-                  .copyWith(color: AppColors.textSub),
+              style: AppTypography.titleMedium.copyWith(
+                color: AppColors.textSub,
+              ),
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
               l10n.translate('no_notifications_subtitle'),
               textAlign: TextAlign.center,
-              style: AppTypography.bodySmall
-                  .copyWith(color: AppColors.textMuted),
+              style: AppTypography.bodySmall.copyWith(
+                color: AppColors.textMuted,
+              ),
             ),
             if (!isLoggedIn) ...[
               const SizedBox(height: AppSpacing.lg),
@@ -503,6 +520,7 @@ class _NotificationTile extends StatelessWidget {
         : '';
 
     return Container(
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: notification.read
             ? AppColors.white
@@ -514,79 +532,75 @@ class _NotificationTile extends StatelessWidget {
               : AppColors.primary.withValues(alpha: 0.15),
         ),
       ),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (!notification.read)
-              Container(
-                width: 3,
-                decoration: const BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(AppSpacing.radiusMd),
-                    bottomLeft: Radius.circular(AppSpacing.radiusMd),
-                  ),
-                ),
-              ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.md),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildAvatar(),
-                    const SizedBox(width: AppSpacing.sm + AppSpacing.xs),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  notification.title,
-                                  style: AppTypography.titleSmall.copyWith(
-                                    fontWeight: notification.read
-                                        ? FontWeight.normal
-                                        : FontWeight.w600,
-                                    color: notification.read
-                                        ? AppColors.text
-                                        : AppColors.text,
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+      // Stack + Positioned paints the unread bar at full tile height without
+      // IntrinsicHeight, which forced a second layout pass per tile.
+      child: Stack(
+        children: [
+          if (!notification.read)
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: Container(width: 3, color: AppColors.primary),
+            ),
+          Padding(
+            padding: EdgeInsets.only(left: notification.read ? 0 : 3),
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildAvatar(),
+                  const SizedBox(width: AppSpacing.sm + AppSpacing.xs),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                notification.title,
+                                style: AppTypography.titleSmall.copyWith(
+                                  fontWeight: notification.read
+                                      ? FontWeight.normal
+                                      : FontWeight.w600,
+                                  color: notification.read
+                                      ? AppColors.text
+                                      : AppColors.text,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (timeAgo.isNotEmpty) ...[
+                              const SizedBox(width: AppSpacing.sm),
+                              Text(
+                                timeAgo,
+                                style: AppTypography.labelSmall.copyWith(
+                                  color: AppColors.textMuted,
                                 ),
                               ),
-                              if (timeAgo.isNotEmpty) ...[
-                                const SizedBox(width: AppSpacing.sm),
-                                Text(
-                                  timeAgo,
-                                  style: AppTypography.labelSmall.copyWith(
-                                    color: AppColors.textMuted,
-                                  ),
-                                ),
-                              ],
                             ],
+                          ],
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                        Text(
+                          notification.message,
+                          style: AppTypography.bodySmall.copyWith(
+                            color: AppColors.textSub,
                           ),
-                          const SizedBox(height: AppSpacing.xs),
-                          Text(
-                            notification.message,
-                            style: AppTypography.bodySmall.copyWith(
-                              color: AppColors.textSub,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
-                      ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -609,12 +623,13 @@ class _NotificationTile extends StatelessWidget {
 
   Color _colorForType(String type) {
     return switch (type) {
-      'booking' || 'booking_created' || 'booking_issued' =>
-        AppColors.primary,
-      'booking_confirmed' || 'payment' || 'payment_received' =>
-        AppColors.statusPaid,
-      'booking_rejected' || 'cancellation' || 'booking_closed' =>
-        AppColors.error,
+      'booking' || 'booking_created' || 'booking_issued' => AppColors.primary,
+      'booking_confirmed' ||
+      'payment' ||
+      'payment_received' => AppColors.statusPaid,
+      'booking_rejected' ||
+      'cancellation' ||
+      'booking_closed' => AppColors.error,
       'booking_paid' => AppColors.statusPaid,
       'journey_alert' || 'journey_alert_snooze' => AppColors.warning,
       'ticket_uploaded' => AppColors.info,
@@ -625,15 +640,17 @@ class _NotificationTile extends StatelessWidget {
 
   IconData _iconForType(String type) {
     return switch (type) {
-      'booking' || 'booking_created' || 'booking_issued' =>
-        Icons.confirmation_num_outlined,
-      'booking_rejected' || 'cancellation' || 'booking_closed' =>
-        Icons.cancel_outlined,
+      'booking' ||
+      'booking_created' ||
+      'booking_issued' => Icons.confirmation_num_outlined,
+      'booking_rejected' ||
+      'cancellation' ||
+      'booking_closed' => Icons.cancel_outlined,
       'booking_paid' => Icons.payments_outlined,
-      'booking_confirmed' || 'payment' || 'payment_received' =>
-        Icons.payment_rounded,
-      'journey_alert' || 'journey_alert_snooze' =>
-        Icons.directions_bus_rounded,
+      'booking_confirmed' ||
+      'payment' ||
+      'payment_received' => Icons.payment_rounded,
+      'journey_alert' || 'journey_alert_snooze' => Icons.directions_bus_rounded,
       'ticket_uploaded' => Icons.confirmation_number_outlined,
       'announcement' || 'info' => Icons.campaign_outlined,
       _ => Icons.notifications_outlined,
@@ -719,9 +736,7 @@ class _NotificationShimmer extends StatelessWidget {
                   width: double.infinity,
                   decoration: BoxDecoration(
                     color: AppColors.border.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(
-                      AppSpacing.radiusSm,
-                    ),
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
                   ),
                 ),
                 const SizedBox(height: AppSpacing.xs),
@@ -730,9 +745,7 @@ class _NotificationShimmer extends StatelessWidget {
                   width: MediaQuery.of(context).size.width * 0.6,
                   decoration: BoxDecoration(
                     color: AppColors.border.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(
-                      AppSpacing.radiusSm,
-                    ),
+                    borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
                   ),
                 ),
               ],
