@@ -61,10 +61,6 @@ class AppRw {
     'select_date': 'Hitamo itariki',
 
     // ── Location / pricing ─────────────────────
-    'location_permission_title': 'Koresha aho uherereye?',
-    'location_permission_body': 'Emera Katisha gukoresha aho uherereye kugira ngo werekane ibiciro by\'urugendo n\'ubwishyu bw\'akarere kawe. Aho uherereye biguma kuri telefoni yawe.',
-    'location_permission_allow': 'Emera aho ndi',
-    'location_permission_not_now': 'Oya ubu',
     'location_permission_denied': 'Aho uherereye ntibyemewe. Bifungure mu Igenamiterere kugira ngo ubone ibiciro by\'akarere kawe.',
     'location_permission_settings': 'Fungura Igenamiterere',
     'location_service_disabled': 'Fungura serivisi y\'aho uherereye kugira ngo ubone ibiciro by\'akarere kawe.',

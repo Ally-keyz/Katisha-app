@@ -18,7 +18,6 @@ import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
 import '../../../../core/widgets/city_autocomplete_field.dart' show cityOptions;
 import '../../../../core/widgets/katisha_modal.dart';
-import '../../../../core/widgets/location_permission_dialog.dart';
 import '../../data/booking_repository.dart';
 import '../../../../shared/models/route_model.dart';
 import '../../../../shared/models/booking_model.dart';
@@ -149,10 +148,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   /// granted (or when the fix is outside the region Katisha serves).
   DeviceLocation? _deviceLocation;
 
-  /// Asked once per install, not on every booking. The OS prompt itself is
-  /// only shown after the in-app explanation dialog is accepted.
-  static const String _locationPromptPrefsKey = 'vdk_location_prompted';
-
   // Step 1: Agency
   List<RouteModel> _routes = [];
   bool _searchingRoutes = false;
@@ -254,49 +249,19 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }
 
   /// Location comes first: the destination picker auto-opens as soon as the
-  /// first step is visible, and stacking the permission story behind that sheet
-  /// would make the location prompt appear out of nowhere later.
+  /// first step is visible, so request access before that sheet is pushed.
   Future<void> _initializeFirstStep() async {
     _applyExtraParams();
-    await _maybeAskForLocation();
+    await _requestLocation();
     if (!mounted) return;
     _autoOpenDestinationPicker();
   }
 
-  /// Explains why Katisha needs the location, then triggers the OS prompt only
-  /// if the traveller agrees. A previously granted permission is reused
-  /// silently; a previous refusal is not repeated on every launch.
-  Future<void> _maybeAskForLocation() async {
+  /// Asks the OS for location access immediately when the booking screen
+  /// opens. There is no extra in-app explanation step: Android/iOS show their
+  /// own permission dialog, and an already-granted permission is reused.
+  Future<void> _requestLocation() async {
     final service = ref.read(locationServiceProvider);
-    final access = await service.checkAccess();
-    if (!mounted) return;
-
-    if (access == LocationAccess.granted) {
-      final location = await service.currentLocation();
-      if (location != null && mounted) {
-        setState(() => _deviceLocation = location);
-      }
-      return;
-    }
-
-    final prefs = ref.read(sharedPreferencesProvider);
-    if (prefs.getBool(_locationPromptPrefsKey) ?? false) return;
-
-    final l10n = AppLocalizations.of(context);
-    final allow = await showLocationPermissionDialog(
-      context: context,
-      title: l10n.translate('location_permission_title'),
-      message: l10n.translate('location_permission_body'),
-      allowLabel: l10n.translate('location_permission_allow'),
-      notNowLabel: l10n.translate('location_permission_not_now'),
-    );
-    await prefs.setBool(_locationPromptPrefsKey, true);
-    if (!allow || !mounted) return;
-
-    await _requestLocation(service);
-  }
-
-  Future<void> _requestLocation(LocationService service) async {
     final access = await service.ensureAccess();
     if (!mounted) return;
 
@@ -308,14 +273,16 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       return;
     }
 
+    // Only guide the traveller when the OS can no longer ask (blocked
+    // permission or location services switched off). A plain "deny" is left
+    // alone so the app never nags.
+    if (access == LocationAccess.denied) return;
+
     final l10n = AppLocalizations.of(context);
     final messenger = ScaffoldMessenger.maybeOf(context);
     if (messenger == null) return;
     messenger.hideCurrentSnackBar();
 
-    final canOpenSettings =
-        access == LocationAccess.deniedForever ||
-        access == LocationAccess.serviceDisabled;
     messenger.showSnackBar(
       SnackBar(
         content: Text(
@@ -324,18 +291,16 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
               : l10n.translate('location_permission_denied'),
         ),
         behavior: SnackBarBehavior.floating,
-        action: canOpenSettings
-            ? SnackBarAction(
-                label: l10n.translate('location_permission_settings'),
-                onPressed: () {
-                  if (access == LocationAccess.serviceDisabled) {
-                    unawaited(service.openLocationSettings());
-                  } else {
-                    unawaited(service.openAppSettings());
-                  }
-                },
-              )
-            : null,
+        action: SnackBarAction(
+          label: l10n.translate('location_permission_settings'),
+          onPressed: () {
+            if (access == LocationAccess.serviceDisabled) {
+              unawaited(service.openLocationSettings());
+            } else {
+              unawaited(service.openAppSettings());
+            }
+          },
+        ),
       ),
     );
   }

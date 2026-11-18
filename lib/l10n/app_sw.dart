@@ -57,10 +57,6 @@ class AppSw {
     'select_date': 'Chagua tarehe ya safari',
 
     // ── Location / pricing ─────────────────────
-    'location_permission_title': 'Tumia eneo lako?',
-    'location_permission_body': 'Ruhusu Katisha kutumia eneo lako ili kuonyesha nauli na bei za malipo za eneo lako. Eneo lako linabaki kwenye kifaa hiki.',
-    'location_permission_allow': 'Ruhusu eneo',
-    'location_permission_not_now': 'Sio sasa',
     'location_permission_denied': 'Eneo limezimwa. Liwashe katika Mipangilio ili kuona bei za eneo lako.',
     'location_permission_settings': 'Fungua Mipangilio',
     'location_service_disabled': 'Washa huduma za eneo ili kuona bei za eneo lako.',

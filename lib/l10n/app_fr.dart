@@ -57,10 +57,6 @@ class AppFr {
     'select_date': 'Sélectionnez la date de voyage',
 
     // ── Location / pricing ─────────────────────
-    'location_permission_title': 'Utiliser votre position ?',
-    'location_permission_body': 'Autorisez Katisha à utiliser votre position pour afficher les tarifs et les prix de paiement de votre région. Votre position reste sur cet appareil.',
-    'location_permission_allow': 'Autoriser la position',
-    'location_permission_not_now': 'Plus tard',
     'location_permission_denied': 'La position est désactivée. Activez-la dans les Réglages pour voir les prix de votre région.',
     'location_permission_settings': 'Ouvrir les réglages',
     'location_service_disabled': 'Activez les services de localisation pour voir les prix de votre région.',

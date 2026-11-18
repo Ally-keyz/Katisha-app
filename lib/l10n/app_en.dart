@@ -54,10 +54,6 @@ class AppEn {
     'select_date': 'Select travel date',
 
     // ── Location / pricing ─────────────────────
-    'location_permission_title': 'Use your location?',
-    'location_permission_body': 'Allow Katisha to use your location to show fares and payment prices for your area. Your location stays on this device.',
-    'location_permission_allow': 'Allow location',
-    'location_permission_not_now': 'Not now',
     'location_permission_denied': 'Location is off. Turn it on from Settings to see prices for your area.',
     'location_permission_settings': 'Open Settings',
     'location_service_disabled': 'Turn on location services to see prices for your area.',
