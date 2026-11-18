@@ -7,7 +7,9 @@ import '../../../../core/network/api_client.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
+import '../../../../core/theme/cloth_texture.dart';
 import '../../../../core/widgets/city_autocomplete_field.dart';
+import '../../../../core/widgets/cloth_button.dart';
 import '../../../../core/widgets/katisha_app_bar.dart';
 import '../../../../features/notifications/data/notifications_repository.dart';
 import '../../../../l10n/app_localizations.dart';
@@ -254,24 +256,13 @@ class _UserHomeScreenState extends ConsumerState<UserHomeScreen> {
   }
 
   Widget _buildSearchButton(AppLocalizations l10n) {
-    return SizedBox(
+    return ClothButton(
+      onPressed: _canSearch ? _searchRoutes : null,
+      textureStyle: ClothTextureStyle.felt,
       height: 52,
-      child: ElevatedButton(
-        onPressed: _canSearch ? _searchRoutes : null,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primary,
-          foregroundColor: AppColors.white,
-          disabledBackgroundColor: AppColors.textMuted,
-          disabledForegroundColor: AppColors.white,
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-          ),
-        ),
-        child: Text(
-          l10n.translate('search_routes'),
-          style: AppTypography.buttonLarge,
-        ),
+      child: Text(
+        l10n.translate('search_routes'),
+        style: AppTypography.buttonLarge,
       ),
     );
   }

@@ -91,6 +91,9 @@ const double _kChipRadius = 14; // "rounded-xl"
 }
 const double _kControlRadius = 12;
 
+/// The active booking view on the agent portal.
+enum _AgentView { action, today, completed }
+
 /// Field-agent portal: assigned-route bookings, the "I have seen it" step, and
 /// the mandatory photo of the physical ticket that makes a booking ready.
 ///
@@ -111,9 +114,9 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
 
   List<Booking> _bookings = <Booking>[];
   bool _loading = true;
-  bool _todayOnly = false;
-  bool _attentionOnly = false;
+  _AgentView _view = _AgentView.action;
   int _tab = 0;
+  int _visibleLimit = 7;
   String? _error;
   Timer? _reloadDebounce;
   StreamSubscription<SocketEvent>? _socketSub;
@@ -143,6 +146,20 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
   bool _needsAttention(Booking booking) =>
       booking.paymentStatus == 'paid' && !_hasProof(booking);
 
+  /// Whether a booking has been paid (only paid bookings are shown to the agent).
+  bool _isPaid(Booking booking) => booking.paymentStatus == 'paid';
+
+  /// Whether the travel date has not yet passed (today or in the future).
+  /// Bookings without a date are treated as upcoming.
+  bool _isUpcoming(Booking booking) {
+    final date = booking.travelDate;
+    if (date == null) return true;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(date.year, date.month, date.day);
+    return !day.isBefore(today);
+  }
+
   /// Derived views, recomputed only when the data or the filter changes.
   /// Previously these were getters, so each rebuild rescanned and reallocated
   /// the 100-row list four or five times.
@@ -150,10 +167,19 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
   List<Booking> _visibleBookings = const <Booking>[];
 
   void _recomputeDerived() {
-    _attentionCount = _bookings.where(_needsAttention).length;
-    _visibleBookings = _attentionOnly
-        ? _bookings.where(_needsAttention).toList(growable: false)
-        : _bookings;
+    _attentionCount = _bookings
+        .where((b) => _needsAttention(b) && _isUpcoming(b))
+        .length;
+    _visibleBookings = switch (_view) {
+      _AgentView.action => _bookings
+          .where((b) => _needsAttention(b) && _isUpcoming(b))
+          .toList()
+        ..sort(_compareBookings),
+      _AgentView.today =>
+        _bookings.where(_isPaid).toList()..sort(_compareBookings),
+      _AgentView.completed =>
+        _bookings.where(_hasProof).toList()..sort(_compareCompleted),
+    };
   }
 
   @override
@@ -217,7 +243,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     final result = await _repo.getAgentBookings(
       page: 1,
       limit: 100,
-      today: _todayOnly,
+      today: _view == _AgentView.today,
     );
     if (!mounted) return;
 
@@ -227,10 +253,15 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
         _error = failure.message;
       }),
       (response) {
-        final active = response.bookings.where(_isRelevant).toList()
-          ..sort(_compareBookings);
+        // Completed rows are history; cancelled/rejected rows never belong here.
+        final active = response.bookings
+            .where(
+              (b) => b.status != 'cancelled' && b.status != 'rejected',
+            )
+            .toList();
         setState(() {
           _bookings = active;
+          _visibleLimit = 7;
           _recomputeDerived();
           _loading = false;
           _error = null;
@@ -270,18 +301,6 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     });
   }
 
-  bool _isRelevant(Booking booking) {
-    if (booking.status == 'cancelled' || booking.status == 'rejected') {
-      return false;
-    }
-    final date = booking.travelDate;
-    if (date == null) return true;
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final day = DateTime(date.year, date.month, date.day);
-    return !day.isBefore(today);
-  }
-
   int _compareBookings(Booking a, Booking b) {
     // Anything waiting on the agent floats to the top of the list.
     final aAttention = _needsAttention(a) ? 0 : 1;
@@ -293,6 +312,16 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     final byDate = da.compareTo(db);
     if (byDate != 0) return byDate;
     return (a.travelTime ?? '').compareTo(b.travelTime ?? '');
+  }
+
+  /// Completed trips list newest-first so the agent sees the most recent
+  /// departure at the top.
+  int _compareCompleted(Booking a, Booking b) {
+    final da = a.travelDate ?? DateTime(2000);
+    final db = b.travelDate ?? DateTime(2000);
+    final byDate = db.compareTo(da);
+    if (byDate != 0) return byDate;
+    return (b.travelTime ?? '').compareTo(a.travelTime ?? '');
   }
 
   // ── Actions ───────────────────────────────────────────────────────────────
@@ -531,6 +560,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     setState(() {
       _bookings[index] = updated;
       _bookings.sort(_compareBookings);
+      _recomputeDerived();
     });
   }
 
@@ -621,11 +651,10 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     return Scaffold(
       backgroundColor: AppColors.white,
       appBar: KatishaAppBar(
-        title: settingsTab ? 'Settings' : 'Agent Portal',
+        title: settingsTab ? 'Settings' : _portalTitle(),
         showLottie: false,
         showBell: false,
         extraActions: [
-          if (!settingsTab) _buildAttentionAction(),
           IconButton(
             tooltip: 'Log out',
             onPressed: _logout,
@@ -642,8 +671,8 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
         ],
       ),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: _tab,
-        onDestinationSelected: (index) => setState(() => _tab = index),
+        selectedIndex: _navIndex,
+        onDestinationSelected: _onNavSelected,
         backgroundColor: AppColors.white,
         elevation: 0,
         height: 68,
@@ -666,6 +695,11 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
             label: 'Bookings',
           ),
           const NavigationDestination(
+            icon: Icon(Icons.check_circle_outline_rounded),
+            selectedIcon: Icon(Icons.check_circle_rounded),
+            label: 'Completed',
+          ),
+          const NavigationDestination(
             icon: Icon(Icons.settings_outlined),
             selectedIcon: Icon(Icons.settings),
             label: 'Settings',
@@ -686,63 +720,37 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     );
   }
 
-  // ── App bar attention flag ────────────────────────────────────────────────
+  /// Bottom-nav index for the current view: Bookings (0), Completed (1),
+  /// Settings (2). "Completed" reuses the Bookings screen with a filter, so it
+  /// never navigates to a separate tab — it filters in place like the
+  /// "Action required" / "Today's" chips.
+  int get _navIndex {
+    if (_tab == 1) return 2;
+    return _view == _AgentView.completed ? 1 : 0;
+  }
 
-  Widget _buildAttentionAction() {
-    final count = _attentionCount;
-    final active = _attentionOnly;
+  void _onNavSelected(int index) {
+    if (index == 2) {
+      setState(() => _tab = 1);
+      return;
+    }
+    final wantCompleted = index == 1;
+    final changed =
+        _tab != 0 || (_view == _AgentView.completed) != wantCompleted;
+    setState(() {
+      _tab = 0;
+      _view = wantCompleted ? _AgentView.completed : _AgentView.action;
+    });
+    if (changed) _load();
+  }
 
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        IconButton(
-          tooltip: count > 0
-              ? '$count booking${count == 1 ? '' : 's'} need attention'
-              : 'Nothing needs attention',
-          onPressed: count == 0 && !active
-              ? null
-              : () {
-                  setState(() {
-                    _attentionOnly = !_attentionOnly;
-                    _recomputeDerived();
-                  });
-                },
-          icon: Icon(
-            active ? Icons.flag_rounded : Icons.flag_outlined,
-            color: count > 0
-                ? AppColors.error
-                : active
-                ? AppColors.primary
-                : AppColors.textMuted,
-          ),
-        ),
-        if (count > 0)
-          Positioned(
-            right: 4,
-            top: 4,
-            child: IgnorePointer(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
-                decoration: const BoxDecoration(
-                  color: AppColors.error,
-                  shape: BoxShape.circle,
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  count > 99 ? '99+' : '$count',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 9.5,
-                    fontWeight: FontWeight.w700,
-                    height: 1,
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
+  /// The app-bar title: the assigned agency's name when the agent is bound to
+  /// one, otherwise the generic portal label.
+  String _portalTitle() {
+    if (_view == _AgentView.completed) return 'Completed';
+    final agency = ref.read(sessionProvider)?.agencyName;
+    if (agency != null && agency.isNotEmpty) return agency;
+    return 'Agent Portal';
   }
 
   // ── Body ──────────────────────────────────────────────────────────────────
@@ -757,28 +765,53 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     }
 
     final bookings = _visibleBookings;
+    final shown = bookings.take(_visibleLimit).toList(growable: false);
+    final hasMore = bookings.length > _visibleLimit;
 
     return Column(
       children: [
         _buildGreeting(),
         _buildFilters(bookings.length),
-        if (_attentionOnly && _attentionCount > 0) _buildAttentionBanner(),
         Expanded(
           child: RefreshIndicator(
             color: AppColors.primary,
             onRefresh: () => _load(silent: true),
-            child: ListView.builder(
+            child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
-              itemCount: bookings.isEmpty ? 1 : bookings.length,
-              itemBuilder: (context, index) {
-                if (bookings.isEmpty) return _buildEmptyState();
-                return _buildBookingCard(bookings[index]);
-              },
+              children: [
+                if (shown.isEmpty) _buildEmptyState(),
+                ...shown.map(_buildBookingCard),
+                if (hasMore) _buildViewMoreButton(),
+              ],
             ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildViewMoreButton() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 4),
+      child: Center(
+        child: OutlinedButton.icon(
+          onPressed: () => setState(() => _visibleLimit += 7),
+          icon: const Icon(Icons.expand_more_rounded, size: 18),
+          label: const Text('View more'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.primary,
+            minimumSize: const Size.fromHeight(44),
+            side: const BorderSide(color: AppColors.primary, width: 1.5),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(_kControlRadius),
+            ),
+            textStyle: AppTypography.labelLarge.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -865,20 +898,38 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
   }
 
   Widget _buildFilters(int visibleCount) {
+    if (_view == _AgentView.completed) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(20, 2, 20, 10),
+        child: Row(
+          children: [
+            _filterChip('Completed', true, () {}),
+            const Spacer(),
+            Text(
+              '$visibleCount ${visibleCount == 1 ? 'trip' : 'trips'}',
+              style: AppTypography.labelSmall.copyWith(
+                color: AppColors.textMuted,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 2, 20, 10),
       child: Row(
         children: [
-          _filterChip('All bookings', !_todayOnly, () {
-            if (_todayOnly) {
-              setState(() => _todayOnly = false);
+          _filterChip('Action required', _view == _AgentView.action, () {
+            if (_view != _AgentView.action) {
+              setState(() => _view = _AgentView.action);
               _load();
             }
           }),
           const SizedBox(width: 8),
-          _filterChip('Today’s trips', _todayOnly, () {
-            if (!_todayOnly) {
-              setState(() => _todayOnly = true);
+          _filterChip('Today’s trips', _view == _AgentView.today, () {
+            if (_view != _AgentView.today) {
+              setState(() => _view = _AgentView.today);
               _load();
             }
           }),
@@ -918,46 +969,6 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     );
   }
 
-  Widget _buildAttentionBanner() {
-    final count = _attentionCount;
-    return Container(
-      margin: const EdgeInsets.fromLTRB(20, 4, 20, 4),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: AppColors.errorBg,
-        borderRadius: BorderRadius.circular(_kControlRadius),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.flag_rounded, size: 16, color: AppColors.error),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              '$count booking${count == 1 ? '' : 's'} need your attention',
-              style: AppTypography.labelMedium.copyWith(
-                color: AppColors.error,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          GestureDetector(
-            onTap: () => setState(() {
-              _attentionOnly = false;
-              _recomputeDerived();
-            }),
-            child: Text(
-              'Show all',
-              style: AppTypography.labelMedium.copyWith(
-                color: AppColors.text,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildSkeleton() {
     return Column(
       children: [
@@ -982,7 +993,8 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
   }
 
   Widget _buildEmptyState() {
-    final attentionMode = _attentionOnly;
+    final isCompleted = _view == _AgentView.completed;
+    final isToday = _view == _AgentView.today;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 64),
       child: Column(
@@ -995,16 +1007,22 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
               shape: BoxShape.circle,
             ),
             child: Icon(
-              attentionMode
-                  ? Icons.check_rounded
-                  : Icons.confirmation_num_outlined,
+              isCompleted
+                  ? Icons.check_circle_outline_rounded
+                  : isToday
+                  ? Icons.today_rounded
+                  : Icons.check_rounded,
               size: 36,
               color: AppColors.textMuted,
             ),
           ),
           const SizedBox(height: 20),
           Text(
-            attentionMode ? 'You are all caught up' : 'No bookings right now',
+            isCompleted
+                ? 'No completed trips yet'
+                : isToday
+                ? 'No trips today'
+                : 'You are all caught up',
             style: AppTypography.titleMedium.copyWith(
               color: AppColors.text,
               fontWeight: FontWeight.w700,
@@ -1013,9 +1031,11 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
           ),
           const SizedBox(height: 6),
           Text(
-            attentionMode
-                ? 'Every paid booking already has its physical ticket photo.'
-                : 'New bookings for your assigned routes will appear here automatically.',
+            isCompleted
+                ? 'Trips you have completed will appear here.'
+                : isToday
+                ? 'No bookings are departing today.'
+                : 'Every paid booking already has its physical ticket photo.',
             textAlign: TextAlign.center,
             style: AppTypography.bodySmall.copyWith(
               color: AppColors.textMuted,
@@ -1114,6 +1134,13 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
         ? '$dateLabel \u00b7 $time'
         : dateLabel;
 
+    // An independent (agency-less) agent sees bookings across companies, so the
+    // bus company must be shown on each card.
+    final agencyName = booking.agency?.name;
+    final showAgency = agencyName != null &&
+        agencyName.isNotEmpty &&
+        (ref.read(sessionProvider)?.agencyName ?? '').isEmpty;
+
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Semantics(
@@ -1163,6 +1190,30 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
+                        if (showAgency) ...[
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.directions_bus_filled_rounded,
+                                size: 13,
+                                color: AppColors.textMuted,
+                              ),
+                              const SizedBox(width: 5),
+                              Expanded(
+                                child: Text(
+                                  agencyName!,
+                                  style: AppTypography.bodySmall.copyWith(
+                                    color: AppColors.textSub,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                         const SizedBox(height: 6),
                         Text(
                           '$passengerName \u00b7 $seatsLabel',

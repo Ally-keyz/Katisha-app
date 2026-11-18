@@ -34,9 +34,11 @@ abstract final class AppColors {
   static const Color success = Color(0xFF0854AE);
   static const Color successBg = Color(0xFFDBEAFE);
 
-  /// Money-in actions (pay now). A deep emerald rather than a bright green:
-  /// it still reads as "go", but stays calm next to the blue brand palette.
-  static const Color paymentAction = Color(0xFF047857);
+  /// Money-in actions (pay now). The deep-red counterpart of the previous
+  /// emerald: it reads as the primary "pay" colour and stays calm next to the
+  /// blue brand palette.
+  static const Color paymentAction = Color(0xFFB91C1C);
+  static const Color paymentActionDark = Color(0xFF991B1B);
 
   // ── Booking Status ───────────────────────────
   static const Color statusPendingAgent = Color(0xFF7C3AED);

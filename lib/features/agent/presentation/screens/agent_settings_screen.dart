@@ -99,15 +99,20 @@ class _AgentSettingsViewState extends ConsumerState<AgentSettingsView> {
   }
 
   Future<void> _sendTestAlert() async {
-    await ref
-        .read(notificationServiceProvider)
-        .showImmediateAlert(
-          title: 'Katisha alerts are working',
-          body: 'You will be notified about paid bookings and bookings that need attention.',
-          type: 'agent_settings_test',
-          // Exercise the same loud, actionable channel as a real alarm.
-          alarm: true,
-        );
+    final service = ref.read(notificationServiceProvider);
+    await service.showImmediateAlert(
+      title: 'Katisha alerts are working',
+      body: 'You will be notified about paid bookings and bookings that need attention.',
+      type: 'agent_settings_test',
+      // Exercise the same loud, actionable channel as a real alarm.
+      alarm: true,
+    );
+    // Also fire a snooze-able departure alert so the "Snooze 5 min" action can
+    // be tested from this screen.
+    await service.showImmediateJourneyAlert(
+      bookingId: 'agent-snooze-test',
+      routeName: 'Kigali → Kampala',
+    );
   }
 
   Future<void> _submit() async {
@@ -653,6 +658,11 @@ class _AgentSettingsViewState extends ConsumerState<AgentSettingsView> {
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Send test fires an agent alert and a snooze-able departure alert.',
+            style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
           ),
         ],
       ),

@@ -21,9 +21,9 @@ const String _kSnoozePrefix = 'snooze_';
 const String _kSnoozeActionId = 'snooze';
 const String _kOpenActionId = 'open_booking';
 const String _kDismissAgentActionId = 'dismiss_agent_alert';
-const String _kJourneyChannelId = 'Katisha_journey_alerts_v2';
+const String _kJourneyChannelId = 'Katisha_journey_alerts_v4';
 const String _kBookingChannelId = 'Katisha_booking_alerts_v2';
-const String _kAgentChannelId = 'Katisha_agent_alerts_v1';
+const String _kAgentChannelId = 'Katisha_agent_alerts_v3';
 
 /// White silhouette drawable used as the Android status-bar icon. Mipmap
 /// launcher icons are not valid notification small icons (adaptive icons can
@@ -99,7 +99,7 @@ class NotificationServiceImpl implements NotificationService {
       priority: Priority.max,
       ticker: 'Departure Alert',
       icon: _kSmallIcon,
-      sound: const RawResourceAndroidNotificationSound('notification'),
+      sound: const RawResourceAndroidNotificationSound('alarm_clock'),
       playSound: true,
       enableVibration: true,
       vibrationPattern: Int64List.fromList(const [0, 900, 450, 900]),
@@ -146,7 +146,7 @@ class NotificationServiceImpl implements NotificationService {
       priority: Priority.max,
       ticker: 'Action required',
       icon: _kSmallIcon,
-      sound: const RawResourceAndroidNotificationSound('notification'),
+      sound: const RawResourceAndroidNotificationSound('alarm_clock'),
       playSound: true,
       enableVibration: true,
       vibrationPattern: Int64List.fromList(const [0, 1000, 500, 1000, 500, 1000]),
@@ -295,6 +295,7 @@ class NotificationServiceImpl implements NotificationService {
               'Loud reminders two hours, one hour, and thirty minutes before departure',
           importance: Importance.max,
           playSound: true,
+          sound: RawResourceAndroidNotificationSound('alarm_clock'),
           enableVibration: true,
         ),
       );
@@ -317,6 +318,7 @@ class NotificationServiceImpl implements NotificationService {
               'New bookings and bookings that still need the agent to act on them',
           importance: Importance.max,
           playSound: true,
+          sound: RawResourceAndroidNotificationSound('alarm_clock'),
           enableVibration: true,
         ),
       );
@@ -711,6 +713,31 @@ class NotificationServiceImpl implements NotificationService {
       title,
       body,
       alarm ? _agentNotificationDetails : _bookingNotificationDetails,
+      payload: payload,
+    );
+  }
+
+  @override
+  Future<void> showImmediateJourneyAlert({
+    required String bookingId,
+    required String routeName,
+  }) async {
+    final title = 'Departure alert (test)';
+    final body = 'Route: $routeName. Snooze to dismiss this alert.';
+    final payload = _encodePayload({
+      'title': title,
+      'body': body,
+      'type': 'journey_alert',
+      'entity_id': bookingId,
+    });
+
+    // No dedupe: the caller explicitly taps "Send test", so every tap should
+    // fire. A fresh id keeps it separate from the snooze reschedule (+5).
+    await _plugin.show(
+      DateTime.now().millisecondsSinceEpoch.remainder(100000),
+      title,
+      body,
+      _journeyNotificationDetails,
       payload: payload,
     );
   }

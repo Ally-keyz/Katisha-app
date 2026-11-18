@@ -16,7 +16,9 @@ import '../../../../core/platform/ticket_sync_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
+import '../../../../core/theme/cloth_texture.dart';
 import '../../../../core/widgets/city_autocomplete_field.dart' show cityOptions;
+import '../../../../core/widgets/cloth_button.dart';
 import '../../../../core/widgets/katisha_modal.dart';
 import '../../data/booking_repository.dart';
 import '../../../../shared/models/route_model.dart';
@@ -73,12 +75,6 @@ List<_GroupedRow> _flattenGroupedRows(
 
 /// Duration for the snappy, smooth bottom-sheet enter/exit animation.
 const _sheetAnimDuration = Duration(milliseconds: 160);
-
-/// PawaPay online payment fee — mirrors the web BookingWizard fallback:
-/// Transaction Fee = round(fare × payoutRate) + payoutFixed, with the server
-/// defaults payoutRate 1% and payoutFixed 60 RWF.
-const _payoutRate = 0.01;
-const _payoutFixed = 60;
 
 /// East-African destination groups mirroring the web BookingWizard's route
 /// catalogue (Kigali origin + cross-border cities). Booking is East Africa
@@ -1549,28 +1545,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           l10n.translate('choose_route_and_time'),
           style: AppTypography.bodyMedium.copyWith(color: AppColors.textSub),
         ),
-        if (_deviceLocation != null) ...[
-          const SizedBox(height: AppSpacing.sm),
-          Row(
-            children: [
-              const Icon(
-                Icons.my_location_rounded,
-                size: 14,
-                color: AppColors.primary,
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  l10n.translate('location_price_hint'),
-                  style: AppTypography.bodySmall.copyWith(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
         const SizedBox(height: AppSpacing.xl),
         _buildLabel(l10n.translate('origin').toUpperCase()),
         const SizedBox(height: AppSpacing.xs),
@@ -2098,15 +2072,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final l10n = AppLocalizations.of(context);
     final isSelected = _selectedRoute?.id == route.id;
     final routePrice = route.routePrice as int;
-    final serviceFee = systemFeeFor(route.type, routePrice, 1).round();
-    final onlineFee = (routePrice * _payoutRate).round() + _payoutFixed;
-    final total = routePrice + serviceFee + onlineFee;
+    final total = _quoteTotal(routePrice);
     final hasPromo = route.hasPromotion == true;
     final originalPrice = (route.originalPrice as int?) ?? routePrice;
-    final originalTotal =
-        originalPrice +
-        systemFeeFor(route.type, originalPrice, 1).round() +
-        ((originalPrice * _payoutRate).round() + _payoutFixed);
+    final originalTotal = originalPrice > 0
+        ? _quoteTotal(originalPrice)
+        : total;
     final name = route.agency.name;
 
     return InkWell(
@@ -3133,19 +3104,24 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     return options.convert(amountRwf, _paymentCurrency);
   }
 
+  /// The deterministic all-in RWF price for [fareTotal], mirroring the web's
+  /// `ticketQuote` (ticket + 3.5% service fee + processing fee, grossed up for
+  /// the deposit fee). The payout network is always MTN, matching the web.
+  int _quoteTotal(int fareTotal) {
+    if (fareTotal <= 0) return 0;
+    return ticketQuote(
+      ticketPrice: fareTotal,
+      depositMno: _paymentMethod,
+      payoutMno: 'MTN',
+    ).totalPrice;
+  }
+
   Widget _buildPaymentStep() {
     final l10n = AppLocalizations.of(context);
     final effectivePrice =
         _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
     final fareTotal = effectivePrice * _seatCount;
-    final serviceFee = systemFeeFor(
-      _selectedRoute?.type,
-      effectivePrice,
-      _seatCount,
-    ).round();
-    final totalAmount = fareTotal + serviceFee;
-    final onlineFee = (fareTotal * _payoutRate).round() + _payoutFixed;
-    final onlineTotal = totalAmount + onlineFee;
+    final onlineTotal = _quoteTotal(fareTotal);
     final currency = _paymentCurrency;
     final localTotal = _localAmount(onlineTotal);
 
@@ -3353,14 +3329,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final effectivePrice =
         _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
     final fareTotal = effectivePrice * _seatCount;
-    final serviceFee = systemFeeFor(
-      _selectedRoute?.type,
-      effectivePrice,
-      _seatCount,
-    ).round();
-    final totalAmount = fareTotal + serviceFee;
-    final onlineFee = (fareTotal * _payoutRate).round() + _payoutFixed;
-    final onlineTotal = totalAmount + onlineFee;
+    final onlineTotal = _quoteTotal(fareTotal);
 
     String nameError = '';
     String phoneError = '';
@@ -3424,11 +3393,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
         return KatishaModal(
           title: step == 0
-              ? 'Choose payment option'
+              ? 'Payment method'
               : l10n.translate('pay_online'),
-          subtitle: step == 0
-              ? 'Available in ${country.name} through pawaPay'
-              : '${provider?.name ?? ''} · ${country.name}',
           closeLabel: l10n.translate('close'),
           bodyScrollable: false,
           child: SingleChildScrollView(
@@ -3448,7 +3414,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   const SizedBox(height: AppSpacing.sm),
                   if (country.providers.isEmpty)
                     Text(
-                      'No mobile money option is available in ${country.name} right now. Please choose another country.',
+                      'No payment option available in ${country.name}.',
                       style: AppTypography.bodySmall.copyWith(
                         color: AppColors.textSub,
                       ),
@@ -3464,34 +3430,31 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                         },
                       ),
                   const SizedBox(height: AppSpacing.lg),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: provider == null
-                          ? null
-                          : () {
-                              ref.read(soundServiceProvider).vibrate();
-                              goToStep(1);
-                            },
-                      style: _paymentModalButtonStyle(),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            'Continue',
-                            style: AppTypography.titleMedium.copyWith(
-                              color: AppColors.white,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(width: AppSpacing.xs),
-                          const Icon(
-                            Icons.arrow_forward,
-                            size: 16,
+                  ClothButton(
+                    onPressed: provider == null
+                        ? null
+                        : () {
+                            ref.read(soundServiceProvider).vibrate();
+                            goToStep(1);
+                          },
+                    textureStyle: ClothTextureStyle.felt,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'Continue',
+                          style: AppTypography.titleMedium.copyWith(
                             color: AppColors.white,
+                            fontWeight: FontWeight.w700,
                           ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(width: AppSpacing.xs),
+                        const Icon(
+                          Icons.arrow_forward,
+                          size: 16,
+                          color: AppColors.white,
+                        ),
+                      ],
                     ),
                   ),
                 ] else ...[
@@ -3544,77 +3507,66 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     ),
                   ),
                   const SizedBox(height: AppSpacing.lg),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _isSubmitting
-                          ? null
-                          : () {
-                              final nameOk =
-                                  _guestNameController.text.trim().isNotEmpty ||
-                                  _isLoggedIn;
-                              final digits = _phoneController.text.replaceAll(
-                                RegExp(r'[^0-9]'),
-                                '',
-                              );
-                              final localDigits = digits.startsWith(prefix)
-                                  ? digits.substring(prefix.length)
-                                  : digits;
-                              setModalState(() {
-                                nameError = nameOk
-                                    ? ''
-                                    : l10n.translate('please_enter_name');
-                                phoneError = localDigits.length >= 8
-                                    ? ''
-                                    : 'Please enter a valid payment phone number';
-                              });
-                              if (nameOk && localDigits.length >= 8) {
-                                ref.read(soundServiceProvider).vibrate();
-                                Navigator.of(context).pop();
-                                _submitBooking();
-                              }
-                            },
-                      style: _paymentModalButtonStyle(isPayment: true),
-                      child: _isSubmitting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: AppColors.white,
+                  ClothButton(
+                    onPressed: _isSubmitting
+                        ? null
+                        : () {
+                            final nameOk =
+                                _guestNameController.text.trim().isNotEmpty ||
+                                _isLoggedIn;
+                            final digits = _phoneController.text.replaceAll(
+                              RegExp(r'[^0-9]'),
+                              '',
+                            );
+                            final localDigits = digits.startsWith(prefix)
+                                ? digits.substring(prefix.length)
+                                : digits;
+                            setModalState(() {
+                              nameError = nameOk
+                                  ? ''
+                                  : l10n.translate('please_enter_name');
+                              phoneError = localDigits.length >= 8
+                                  ? ''
+                                  : 'Please enter a valid payment phone number';
+                            });
+                            if (nameOk && localDigits.length >= 8) {
+                              ref.read(soundServiceProvider).vibrate();
+                              Navigator.of(context).pop();
+                              _submitBooking();
+                            }
+                          },
+                    color: AppColors.paymentAction,
+                    textureStyle: ClothTextureStyle.canvas,
+                    child: _isSubmitting
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: AppColors.white,
+                            ),
+                          )
+                        : Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Pay ${_formatAmount(localTotal)} $currency',
+                                style: AppTypography.titleMedium.copyWith(
+                                  color: AppColors.white,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
-                            )
-                          : Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
+                              if (currency != 'RWF')
                                 Text(
-                                  'Pay ${_formatAmount(localTotal)} $currency',
-                                  style: AppTypography.titleMedium.copyWith(
-                                    color: AppColors.white,
-                                    fontWeight: FontWeight.w700,
+                                  '≈ ${_formatAmount(onlineTotal)} RWF',
+                                  style: AppTypography.labelSmall.copyWith(
+                                    color: Colors.white70,
                                   ),
                                 ),
-                                if (currency != 'RWF')
-                                  Text(
-                                    '≈ ${_formatAmount(onlineTotal)} RWF',
-                                    style: AppTypography.labelSmall.copyWith(
-                                      color: Colors.white70,
-                                    ),
-                                  ),
-                              ],
-                            ),
-                    ),
+                            ],
+                          ),
                   ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Center(
-                    child: Text(
-                      'You will receive a prompt on your phone to approve the payment.',
-                      textAlign: TextAlign.center,
-                      style: AppTypography.labelSmall.copyWith(
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                  ),
+                  const SizedBox(height: AppSpacing.md),
                 ],
                 const SizedBox(height: AppSpacing.md),
               ],
@@ -3660,9 +3612,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       ),
                     ),
                     Text(
-                      '${country.currency} · '
-                      '${country.providers.length} payment '
-                      '${country.providers.length == 1 ? 'option' : 'options'}',
+                      country.currency,
                       style: AppTypography.bodySmall.copyWith(
                         color: AppColors.textMuted,
                       ),
@@ -3749,8 +3699,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       ),
                       const SizedBox(height: 1),
                       Text(
-                        '${option.currency} · '
-                        '${_paymentMethodLabel(option.method)}',
+                        _paymentMethodLabel(option.method),
                         style: AppTypography.bodySmall.copyWith(
                           color: AppColors.textMuted,
                         ),
@@ -3885,7 +3834,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                     children: [
                       Expanded(
                         child: Text(
-                          'Select your country',
+                          'Country',
                           style: AppTypography.titleMedium.copyWith(
                             fontWeight: FontWeight.w700,
                           ),
@@ -3920,8 +3869,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                           ),
                         ),
                         subtitle: Text(
-                          '${country.currency} · ${country.providers.length} '
-                          '${country.providers.length == 1 ? 'option' : 'options'}',
+                          country.currency,
                           style: AppTypography.bodySmall.copyWith(
                             color: AppColors.textMuted,
                           ),
@@ -3998,21 +3946,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
-  /// Modal action button. [isPayment] paints the money-in action green; the
-  /// step-navigation "Continue" button stays in the brand blue.
-  ButtonStyle _paymentModalButtonStyle({bool isPayment = false}) {
-    return ElevatedButton.styleFrom(
-      backgroundColor: isPayment ? AppColors.paymentAction : AppColors.primary,
-      foregroundColor: AppColors.white,
-      disabledBackgroundColor: AppColors.textMuted,
-      padding: const EdgeInsets.symmetric(vertical: 16),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-      ),
-      elevation: 0,
-    );
-  }
-
   // ── NAVIGATION ──
 
   Widget _buildNavigationButtons() {
@@ -4027,34 +3960,37 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
           if (_currentStep > 0)
             Expanded(
               flex: 1,
-              child: OutlinedButton.icon(
+              child: ClothButton(
                 onPressed: _isSubmitting ? null : _goBack,
-                icon: const Icon(Icons.arrow_back, size: 14),
-                label: Text(
-                  l10n.translate('back'),
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.text,
-                  ),
-                ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.text,
-                  side: const BorderSide(color: AppColors.border, width: 2),
-                  padding: const EdgeInsets.symmetric(
-                    vertical: 8,
-                    horizontal: 8,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                  ),
+                color: AppColors.surface,
+                side: const BorderSide(color: AppColors.border, width: 2),
+                textureStyle: ClothTextureStyle.canvas,
+                height: 48,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.arrow_back,
+                      size: 14,
+                      color: AppColors.text,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      l10n.translate('back'),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.text,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ),
           if (_currentStep > 0) const SizedBox(width: AppSpacing.md),
           Expanded(
             flex: _currentStep > 0 ? 2 : 1,
-            child: ElevatedButton(
+            child: ClothButton(
               onPressed: _isSubmitting
                   ? null
                   : _currentStep == 4
@@ -4063,16 +3999,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       _openOnlinePaymentModal();
                     }
                   : _goNext,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: AppColors.white,
-                disabledBackgroundColor: AppColors.textMuted,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                ),
-                elevation: 0,
-              ),
+              textureStyle: ClothTextureStyle.felt,
+              height: 48,
               child: _isSubmitting
                   ? const SizedBox(
                       width: 18,
@@ -4386,12 +4314,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final effectivePrice =
         _selectedRoute?.effectivePrice ?? _selectedRoute?.price ?? 0;
     final fareTotal = effectivePrice * _seatCount;
-    final serviceFee = systemFeeFor(
-      _selectedRoute?.type,
-      effectivePrice,
-      _seatCount,
-    ).round();
-    final totalAmount = fareTotal + serviceFee;
+    final totalAmount = _quoteTotal(fareTotal);
 
     return Scaffold(
       backgroundColor: AppColors.white,
@@ -4468,46 +4391,39 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       const SizedBox(height: AppSpacing.lg),
                     ],
 
-                    // Green "Cancel payment" CTA
-                    SizedBox(
-                      width: double.infinity,
+                    // Cloth-textured "Cancel payment" CTA
+                    ClothButton(
+                      onPressed: _cancellingWaiting
+                          ? null
+                          : _cancelFromPaymentWaiting,
+                      textureStyle: ClothTextureStyle.felt,
                       height: 40,
-                      child: ElevatedButton.icon(
-                        onPressed: _cancellingWaiting
-                            ? null
-                            : _cancelFromPaymentWaiting,
-                        icon: _cancellingWaiting
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: AppColors.white,
-                                ),
-                              )
-                            : const Icon(Icons.close, size: 16),
-                        label: Text(
-                          _cancellingWaiting
-                              ? l10n.translate('payment_cancelling')
-                              : l10n.translate('payment_cancel'),
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.white,
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: AppColors.white,
-                          disabledBackgroundColor: AppColors.primary,
-                          disabledForegroundColor: AppColors.white,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(
-                              AppSpacing.radiusMd,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (_cancellingWaiting)
+                            const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: AppColors.white,
+                              ),
+                            )
+                          else
+                            const Icon(Icons.close, size: 16, color: AppColors.white),
+                          const SizedBox(width: 6),
+                          Text(
+                            _cancellingWaiting
+                                ? l10n.translate('payment_cancelling')
+                                : l10n.translate('payment_cancel'),
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.white,
                             ),
                           ),
-                        ),
+                        ],
                       ),
                     ),
                   ],

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_spacing.dart';
 import '../theme/app_typography.dart';
+import '../theme/cloth_texture.dart';
+import 'cloth_button.dart';
 
 /// Fraction of the screen height every Katisha selector sheet occupies.
 ///
@@ -235,28 +237,22 @@ class KatishaModalAction extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = onPressed != null && !busy;
+    final foreground = isSecondary ? AppColors.text : AppColors.white;
     return SizedBox(
       width: double.infinity,
       height: 48,
-      child: ElevatedButton(
+      child: ClothButton(
         onPressed: enabled ? onPressed : null,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: isSecondary ? AppColors.surface : AppColors.primary,
-          foregroundColor: isSecondary ? AppColors.text : AppColors.white,
-          disabledBackgroundColor: isSecondary
-              ? AppColors.surfaceVariant
-              : AppColors.primaryLight,
-          disabledForegroundColor: isSecondary
-              ? AppColors.textMuted
-              : AppColors.primary,
-          elevation: 0,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-            side: isSecondary
-                ? const BorderSide(color: AppColors.border)
-                : BorderSide.none,
-          ),
-        ),
+        color: isSecondary ? AppColors.surface : AppColors.primary,
+        disabledColor:
+            isSecondary ? AppColors.surfaceVariant : AppColors.primaryLight,
+        textureStyle: isSecondary
+            ? ClothTextureStyle.canvas
+            : ClothTextureStyle.felt,
+        height: 48,
+        side: isSecondary
+            ? const BorderSide(color: AppColors.border)
+            : BorderSide.none,
         child: busy
             ? SizedBox(
                 width: 18,
@@ -270,9 +266,7 @@ class KatishaModalAction extends StatelessWidget {
                 label,
                 // AppTypography.buttonMedium hardcodes a white color, which
                 // would make the secondary (light) button's label invisible.
-                style: AppTypography.buttonMedium.copyWith(
-                  color: isSecondary ? AppColors.text : AppColors.white,
-                ),
+                style: AppTypography.buttonMedium.copyWith(color: foreground),
               ),
       ),
     );
