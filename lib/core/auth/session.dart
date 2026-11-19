@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -77,7 +78,11 @@ class SessionController extends StateNotifier<SessionUser?> {
   String? get accessToken => _api.accessToken;
 
   /// Restores the session from secure tokens plus the cached public profile.
-  /// Refreshes from the server when possible; never throws.
+  ///
+  /// A cached profile is returned immediately and refreshed in the background:
+  /// the splash screen must not wait for `/auth/profile` (30 s worst case on a
+  /// dead connection). Only the first launch after installing/upgrading has no
+  /// cache, and even then the wait is capped. Never throws.
   Future<void> restore() async {
     if (!_api.isAuthenticated) {
       state = null;
@@ -85,8 +90,21 @@ class SessionController extends StateNotifier<SessionUser?> {
     }
 
     final cached = _readCached();
-    if (cached != null) state = cached;
+    if (cached != null) {
+      state = cached;
+      unawaited(_refreshProfile());
+      return;
+    }
 
+    // No cached profile yet: fetch it so the app can route by role, but don't
+    // let a dead network hold the splash screen hostage.
+    await _refreshProfile().timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {},
+    );
+  }
+
+  Future<void> _refreshProfile() async {
     try {
       final response = await _api.get('/auth/profile');
       final data = response.data;
@@ -104,14 +122,10 @@ class SessionController extends StateNotifier<SessionUser?> {
         final user = SessionUser.fromJson(userJson);
         state = user;
         await _save(user);
-        return;
       }
     } catch (e) {
       debugPrint('[Session] Profile refresh failed: $e');
     }
-
-    // If no cached user and the profile is unavailable, keep cached/unknown
-    // state; the login screen is still reachable.
   }
 
   /// Signs in with phone/username + password, persists the tokens, and returns

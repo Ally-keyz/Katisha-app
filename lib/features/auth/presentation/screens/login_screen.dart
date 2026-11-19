@@ -8,6 +8,7 @@ import '../../../../core/auth/session.dart';
 import '../../../../core/error/failures.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/platform/platform_providers.dart';
+import '../../../../core/platform/ticket_sync_service.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
 import '../../../../core/theme/app_typography.dart';
@@ -78,6 +79,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       }
 
       if (!mounted) return;
+      // A passenger's tickets should be on disk before they need them. Agents
+      // have no passenger tickets, so skip the download for them.
+      if (!user.isAgent) startBackgroundTicketSync(ref);
       context.go(user.isAgent ? '/agent' : '/home');
     } catch (e) {
       if (!mounted) return;

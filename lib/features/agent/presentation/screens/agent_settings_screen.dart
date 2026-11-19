@@ -16,7 +16,6 @@ import '../../../../core/theme/app_typography.dart';
 /// Neutral tones used by this screen. Kept local so the redesign does not
 /// touch the shared palette.
 const Color _kGray = Color(0xFFF3F4F6); // card / input fill
-const Color _kGrayStrong = Color(0xFFE5E7EB); // subtle dividers, pressed states
 const Color _kSuccess = Color(0xFF15803D);
 const Color _kSuccessBg = Color(0xFFECFDF3);
 
@@ -95,23 +94,6 @@ class _AgentSettingsViewState extends ConsumerState<AgentSettingsView> {
           ? 'Device alerts are on.'
           : 'Alerts are blocked. Allow notifications for Katisha in your phone settings.',
       isError: !granted,
-    );
-  }
-
-  Future<void> _sendTestAlert() async {
-    final service = ref.read(notificationServiceProvider);
-    await service.showImmediateAlert(
-      title: 'Katisha alerts are working',
-      body: 'You will be notified about paid bookings and bookings that need attention.',
-      type: 'agent_settings_test',
-      // Exercise the same loud, actionable channel as a real alarm.
-      alarm: true,
-    );
-    // Also fire a snooze-able departure alert so the "Snooze 5 min" action can
-    // be tested from this screen.
-    await service.showImmediateJourneyAlert(
-      bookingId: 'agent-snooze-test',
-      routeName: 'Kigali → Kampala',
     );
   }
 
@@ -604,66 +586,36 @@ class _AgentSettingsViewState extends ConsumerState<AgentSettingsView> {
               ],
             ],
           ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              if (enabled != true) ...[
-                Expanded(
-                  child: FilledButton(
-                    onPressed: _requestingAlerts ? null : _enableAlerts,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: AppColors.white,
-                      disabledBackgroundColor: AppColors.primary.withValues(
-                        alpha: 0.6,
-                      ),
-                      disabledForegroundColor: AppColors.white,
-                      elevation: 0,
-                      minimumSize: const Size.fromHeight(46),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(_kFieldRadius),
-                      ),
-                      textStyle: AppTypography.buttonSmall,
-                    ),
-                    child: _requestingAlerts
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: AppColors.white,
-                            ),
-                          )
-                        : const Text('Enable alerts'),
-                  ),
+          if (enabled != true) ...[
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: _requestingAlerts ? null : _enableAlerts,
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: AppColors.white,
+                disabledBackgroundColor: AppColors.primary.withValues(
+                  alpha: 0.6,
                 ),
-                const SizedBox(width: 10),
-              ],
-              Expanded(
-                child: FilledButton(
-                  onPressed: _sendTestAlert,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.white,
-                    foregroundColor: AppColors.text,
-                    elevation: 0,
-                    minimumSize: const Size.fromHeight(46),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(_kFieldRadius),
-                    ),
-                    textStyle: AppTypography.buttonSmall.copyWith(
-                      color: AppColors.text,
-                    ),
-                  ),
-                  child: const Text('Send test'),
+                disabledForegroundColor: AppColors.white,
+                elevation: 0,
+                minimumSize: const Size.fromHeight(46),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(_kFieldRadius),
                 ),
+                textStyle: AppTypography.buttonSmall,
               ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Send test fires an agent alert and a snooze-able departure alert.',
-            style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
-          ),
+              child: _requestingAlerts
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.white,
+                      ),
+                    )
+                  : const Text('Enable alerts'),
+            ),
+          ],
         ],
       ),
     );

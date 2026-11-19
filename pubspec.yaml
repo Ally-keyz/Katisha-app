@@ -1,7 +1,7 @@
 name: katisha
 description: "Katisha - Bus Ticket Booking Mobile Application"
 publish_to: 'none'
-version: 1.0.0+15
+version: 1.0.1+16
 
 environment:
   sdk: ^3.10.4
@@ -18,7 +18,6 @@ dependencies:
   cached_network_image: ^3.4.1
   shimmer: ^3.0.0
   flutter_animate: ^4.5.2
-  google_fonts: ^6.2.1
 
   # State Management
   flutter_riverpod: ^2.6.1

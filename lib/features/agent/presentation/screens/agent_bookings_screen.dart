@@ -48,7 +48,6 @@ const Color _kTeal = Color(0xFF19D3B5);
 const Color _kGreen = Color(0xFF15803D);
 const Color _kGreenBg = Color(0xFFE6F6EC);
 const Color _kSlate = Color(0xFF475569);
-const Color _kSlateBg = Color(0xFFE5E7EB);
 
 const double _kCardRadius = 18;
 const double _kChipRadius = 14; // "rounded-xl"
@@ -160,6 +159,18 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     return !day.isBefore(today);
   }
 
+  /// Whether the booking departs today. The whole feed is fetched once, so the
+  /// "Today's trips" chip filters the cached rows instead of waiting on a new
+  /// network request.
+  bool _isToday(Booking booking) {
+    final date = booking.travelDate;
+    if (date == null) return false;
+    final now = DateTime.now();
+    return date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day;
+  }
+
   /// Derived views, recomputed only when the data or the filter changes.
   /// Previously these were getters, so each rebuild rescanned and reallocated
   /// the 100-row list four or five times.
@@ -175,8 +186,10 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
           .where((b) => _needsAttention(b) && _isUpcoming(b))
           .toList()
         ..sort(_compareBookings),
-      _AgentView.today =>
-        _bookings.where(_isPaid).toList()..sort(_compareBookings),
+      _AgentView.today => _bookings
+          .where((b) => _isPaid(b) && _isToday(b))
+          .toList()
+        ..sort(_compareBookings),
       _AgentView.completed =>
         _bookings.where(_hasProof).toList()..sort(_compareCompleted),
     };
@@ -240,11 +253,9 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
       });
     }
 
-    final result = await _repo.getAgentBookings(
-      page: 1,
-      limit: 100,
-      today: _view == _AgentView.today,
-    );
+    // Always fetch the full feed. All three tabs filter the same cached rows,
+    // so switching tabs is instant and never depends on a network round-trip.
+    final result = await _repo.getAgentBookings(page: 1, limit: 100);
     if (!mounted) return;
 
     result.fold(
@@ -335,6 +346,9 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     return result.fold(
       (failure) {
         _showSnack(failure.message, isError: true);
+        // The booking may have been claimed by another agent in the meantime;
+        // refresh so it drops out of this agent's feed immediately.
+        _scheduleReload();
         return null;
       },
       (updated) {
@@ -403,6 +417,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     return result.fold(
       (failure) {
         _showSnack(failure.message, isError: true);
+        _scheduleReload();
         return null;
       },
       (updated) {
@@ -729,19 +744,27 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     return _view == _AgentView.completed ? 1 : 0;
   }
 
+  /// Switches the bookings filter immediately from the cached rows and only
+  /// refreshes in the background. A tab tap must never wait on the network:
+  /// all three tabs share one feed, so filtering is instant.
+  void _selectView(_AgentView view) {
+    if (_view == view && _tab == 0) return;
+
+    setState(() {
+      _tab = 0;
+      _view = view;
+      _visibleLimit = 7;
+      _recomputeDerived();
+    });
+    _scheduleReload();
+  }
+
   void _onNavSelected(int index) {
     if (index == 2) {
       setState(() => _tab = 1);
       return;
     }
-    final wantCompleted = index == 1;
-    final changed =
-        _tab != 0 || (_view == _AgentView.completed) != wantCompleted;
-    setState(() {
-      _tab = 0;
-      _view = wantCompleted ? _AgentView.completed : _AgentView.action;
-    });
-    if (changed) _load();
+    _selectView(index == 1 ? _AgentView.completed : _AgentView.action);
   }
 
   /// The app-bar title: the assigned agency's name when the agent is bound to
@@ -920,19 +943,17 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
       padding: const EdgeInsets.fromLTRB(20, 2, 20, 10),
       child: Row(
         children: [
-          _filterChip('Action required', _view == _AgentView.action, () {
-            if (_view != _AgentView.action) {
-              setState(() => _view = _AgentView.action);
-              _load();
-            }
-          }),
+          _filterChip(
+            'Action required',
+            _view == _AgentView.action,
+            () => _selectView(_AgentView.action),
+          ),
           const SizedBox(width: 8),
-          _filterChip('Today’s trips', _view == _AgentView.today, () {
-            if (_view != _AgentView.today) {
-              setState(() => _view = _AgentView.today);
-              _load();
-            }
-          }),
+          _filterChip(
+            'Today’s trips',
+            _view == _AgentView.today,
+            () => _selectView(_AgentView.today),
+          ),
           const Spacer(),
           Text(
             '$visibleCount ${visibleCount == 1 ? 'booking' : 'bookings'}',
@@ -1202,7 +1223,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
                               const SizedBox(width: 5),
                               Expanded(
                                 child: Text(
-                                  agencyName!,
+                                  agencyName,
                                   style: AppTypography.bodySmall.copyWith(
                                     color: AppColors.textSub,
                                     fontWeight: FontWeight.w600,

@@ -121,11 +121,6 @@ class _NoOpNotificationService implements NotificationService {
     bool alarm = false,
   }) async {}
   @override
-  Future<void> showImmediateJourneyAlert({
-    required String bookingId,
-    required String routeName,
-  }) async {}
-  @override
   Future<void> handleSnooze(String bookingId) async {}
   @override
   Stream<NotificationPayload> get onNotificationTapped =>

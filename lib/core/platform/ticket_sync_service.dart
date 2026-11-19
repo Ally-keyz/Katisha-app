@@ -25,6 +25,14 @@ class TicketSyncService {
   final NotificationService _notifications;
   bool _syncing = false;
 
+  /// When the last successful sync finished. App-resume and startup both ask
+  /// for a sync, and without this the app would download every ticket again a
+  /// second after launch. Socket events pass `force: true` so a freshly issued
+  /// ticket is cached immediately even if a sync just ran.
+  DateTime? _lastFinishedAt;
+
+  static const _minimumSyncInterval = Duration(minutes: 2);
+
   /// Remembers which departure time was last scheduled for a booking, so a
   /// sync that runs on every app action does not re-schedule the same alarms.
   final Map<String, String> _scheduledAlerts = {};
@@ -37,10 +45,20 @@ class TicketSyncService {
   /// Fetches all pages of the logged-in user's bookings and caches each one
   /// (ticket JSON + private ticket image) locally. No-op when signed out.
   /// Never throws — failures just stop the background sync quietly.
-  Future<void> syncAllTickets() async {
+  ///
+  /// [force] bypasses the short throttle used to collapse the startup and
+  /// app-resume syncs into one. Ticket-push handlers pass `true`.
+  Future<void> syncAllTickets({bool force = false}) async {
     if (!_api.isAuthenticated || _syncing) return;
+    final last = _lastFinishedAt;
+    if (!force &&
+        last != null &&
+        DateTime.now().difference(last) < _minimumSyncInterval) {
+      return;
+    }
     _syncing = true;
     var page = 1;
+    var completed = false;
     try {
       // Cache as much as available (safety cap of 100 pages); if the session
       // is dropped mid-sync, stop early.
@@ -110,10 +128,14 @@ class TicketSyncService {
         page++;
         if (page > pages) break;
       }
+      completed = true;
     } catch (_) {
       // Best-effort background sync — never crash the app on network errors.
+      // Do not record a finish time: a failed sync should be retried on the
+      // next resume instead of being throttled for two minutes.
     } finally {
       _syncing = false;
+      if (completed) _lastFinishedAt = DateTime.now();
     }
   }
 

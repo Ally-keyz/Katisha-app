@@ -481,6 +481,36 @@ class NotificationServiceImpl implements NotificationService {
   Stream<String> get onDeviceTokenRefresh =>
       _deviceTokenRefreshController.stream;
 
+  /// Requests the token again the moment permission is granted and hands it to
+  /// the app so it can register the device with the API. Without this, a
+  /// session restored before the prompt could keep a null token until the next
+  /// cold start, silently disabling background push on iOS (APNs only issues a
+  /// token after the user allows notifications).
+  void _syncDeviceTokenAfterPermission() {
+    unawaited(_retryDeviceTokenSync());
+  }
+
+  Future<void> _retryDeviceTokenSync() async {
+    // iOS can take a few seconds after the prompt to hand out the APNs token,
+    // which FCM needs before it can mint a registration token.
+    for (var attempt = 0; attempt < 4; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(Duration(seconds: 2 * attempt));
+      }
+      final token = await getDeviceToken();
+      if (token == null || token.isEmpty) continue;
+      if (!_deviceTokenRefreshController.isClosed) {
+        _deviceTokenRefreshController.add(token);
+      }
+      return;
+    }
+  }
+
+  bool _permissionResult(bool granted) {
+    if (granted) _syncDeviceTokenAfterPermission();
+    return granted;
+  }
+
   @override
   Future<bool> requestPermission() async {
     try {
@@ -505,7 +535,7 @@ class NotificationServiceImpl implements NotificationService {
         final status = settings.authorizationStatus;
         if (status == AuthorizationStatus.authorized ||
             status == AuthorizationStatus.provisional) {
-          return true;
+          return _permissionResult(true);
         }
         if (status == AuthorizationStatus.denied) return false;
       } catch (error) {
@@ -520,7 +550,7 @@ class NotificationServiceImpl implements NotificationService {
       if (androidPlugin != null) {
         try {
           final granted = await androidPlugin.requestNotificationsPermission();
-          return granted ?? false;
+          return _permissionResult(granted ?? false);
         } catch (_) {
           return false;
         }
@@ -539,7 +569,7 @@ class NotificationServiceImpl implements NotificationService {
             badge: true,
             sound: true,
           );
-          return granted ?? false;
+          return _permissionResult(granted ?? false);
         } catch (_) {
           return false;
         }
@@ -713,31 +743,6 @@ class NotificationServiceImpl implements NotificationService {
       title,
       body,
       alarm ? _agentNotificationDetails : _bookingNotificationDetails,
-      payload: payload,
-    );
-  }
-
-  @override
-  Future<void> showImmediateJourneyAlert({
-    required String bookingId,
-    required String routeName,
-  }) async {
-    final title = 'Departure alert (test)';
-    final body = 'Route: $routeName. Snooze to dismiss this alert.';
-    final payload = _encodePayload({
-      'title': title,
-      'body': body,
-      'type': 'journey_alert',
-      'entity_id': bookingId,
-    });
-
-    // No dedupe: the caller explicitly taps "Send test", so every tap should
-    // fire. A fresh id keeps it separate from the snooze reschedule (+5).
-    await _plugin.show(
-      DateTime.now().millisecondsSinceEpoch.remainder(100000),
-      title,
-      body,
-      _journeyNotificationDetails,
       payload: payload,
     );
   }

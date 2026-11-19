@@ -86,15 +86,6 @@ abstract class NotificationService {
     bool alarm = false,
   });
 
-  /// Shows an immediate departure-style alert carrying the "Snooze" action, so
-  /// the snooze flow can be exercised on demand (e.g. the agent settings
-  /// "Send test" button). [bookingId] is a key for the snooze budget/action —
-  /// it does not need to match a real booking.
-  Future<void> showImmediateJourneyAlert({
-    required String bookingId,
-    required String routeName,
-  });
-
   /// Cancels a previously scheduled journey alert by booking ID.
   Future<void> cancelJourneyAlert(String bookingId);
 

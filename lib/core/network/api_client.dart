@@ -44,9 +44,23 @@ class ApiClient {
   }
 
   /// Load persisted tokens into memory on app startup.
+  ///
+  /// The two reads are independent, so they run concurrently: secure-storage
+  /// calls are platform round-trips and reading them one after the other added
+  /// their latency to the splash screen. A broken keystore must not block the
+  /// app either, so failures fall back to "signed out".
   Future<void> init() async {
-    _accessToken = await _secureStorage.read(key: kAccessTokenKey);
-    _refreshToken = await _secureStorage.read(key: kRefreshTokenKey);
+    try {
+      final tokens = await Future.wait([
+        _secureStorage.read(key: kAccessTokenKey),
+        _secureStorage.read(key: kRefreshTokenKey),
+      ]);
+      _accessToken = tokens[0];
+      _refreshToken = tokens[1];
+    } catch (_) {
+      _accessToken = null;
+      _refreshToken = null;
+    }
   }
 
   /// Persist tokens both in memory and on disk (secure storage).

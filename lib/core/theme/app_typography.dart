@@ -1,22 +1,24 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'app_colors.dart';
 
 /// Katisha typography system.
-/// Uses Google Fonts (Inter) as primary, matching the web app's font stack.
 ///
-/// Every style is a cached [TextStyle] constant rather than a getter. Building
-/// a style goes through `GoogleFonts.inter`, which hashes the font family and
-/// consults the font loader (and can trigger an asset/network load) on every
-/// call. These getters used to be rebuilt on each access, so a single frame
-/// that rendered a few dozen `AppTypography.bodyMedium` styles paid that cost
-/// dozens of times. Caching them keeps the cost to once per app run.
+/// Uses the platform's native UI font (Roboto on Android, San Francisco on
+/// iOS). The app used to route every style through Google Fonts, which fetched
+/// Inter from the network on first launch and cached it on disk: slow first
+/// paint, a network dependency before any text could render, and an extra
+/// failure mode offline. The platform font is just as legible and free.
+///
+/// Every style is a cached [TextStyle] constant rather than a getter. These
+/// getters used to be rebuilt on each access, so a single frame that rendered a
+/// few dozen `AppTypography.bodyMedium` styles re-created dozens of styles.
+/// Caching them keeps the cost to once per app run.
 ///
 /// Callers still copy before mutating (`AppTypography.bodyMedium.copyWith(...)`),
 /// so callers can't accidentally mutate the shared instance.
 abstract final class AppTypography {
   static TextStyle _base({double? fontSize, FontWeight? fontWeight, Color? color}) {
-    return GoogleFonts.inter(
+    return TextStyle(
       fontSize: fontSize,
       fontWeight: fontWeight,
       color: color ?? AppColors.text,

@@ -70,7 +70,8 @@ class KatishaApp extends ConsumerStatefulWidget {
   ConsumerState<KatishaApp> createState() => _KatishaAppState();
 }
 
-class _KatishaAppState extends ConsumerState<KatishaApp> {
+class _KatishaAppState extends ConsumerState<KatishaApp>
+    with WidgetsBindingObserver {
   StreamSubscription<NotificationPayload>? _notificationTapSub;
   StreamSubscription<SocketEvent>? _socketEventSub;
   StreamSubscription<SessionUser?>? _sessionSub;
@@ -81,9 +82,22 @@ class _KatishaAppState extends ConsumerState<KatishaApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _setupNotificationTapListener();
     _setupDeviceTokenSync();
     _setupSessionAndSocket();
+  }
+
+  /// Refresh the offline ticket cache when the app comes back to the
+  /// foreground. A ticket issued while the app was backgrounded is then saved
+  /// (JSON + image) as soon as the user returns, before they ever open it.
+  /// [TicketSyncService] throttles repeats, so quick app switches are cheap.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final user = _session;
+    if (user == null || user.isAgent) return;
+    unawaited(ref.read(ticketSyncServiceProvider).syncAllTickets());
   }
 
   void _setupNotificationTapListener() {
@@ -109,29 +123,50 @@ class _KatishaAppState extends ConsumerState<KatishaApp> {
   /// Sends the FCM token to the API so the server can push to this device.
   /// Safe to call repeatedly: the last token is remembered and re-registration
   /// is skipped unless Firebase rotated it.
+  ///
+  /// Both fetching the token and the HTTP call are retried briefly. On a cold
+  /// start the network may not be ready yet, and iOS can still be waiting for
+  /// its APNs token; giving up on the first attempt would leave the phone
+  /// without background alerts until the next app launch.
   Future<void> _registerDeviceToken({String? tokenOverride}) async {
     if (_session == null) return;
 
-    try {
-      final service = ref.read(notificationServiceProvider);
-      final token = tokenOverride ?? await service.getDeviceToken();
-      if (token == null || token.isEmpty) return;
-      if (token == _registeredDeviceToken) return;
+    var token = tokenOverride;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        token ??= await ref
+            .read(notificationServiceProvider)
+            .getDeviceToken();
+        if (token == null || token.isEmpty) {
+          // Clear an empty override so the next attempt fetches a fresh token
+          // instead of looping with the same useless value.
+          token = null;
+          if (attempt < 2) {
+            await Future<void>.delayed(Duration(seconds: 2 * (attempt + 1)));
+            continue;
+          }
+          return;
+        }
+        if (token == _registeredDeviceToken) return;
 
-      await ref.read(apiClientProvider).post(
-        '/auth/device-token',
-        data: {
-          'token': token,
-          'platform': Platform.isIOS ? 'ios' : 'android',
-        },
-      );
-      _registeredDeviceToken = token;
-      await ref
-          .read(sharedPreferencesProvider)
-          .setString(kDeviceTokenPrefsKey, token);
-    } catch (error) {
-      // A failed registration must never interrupt the session.
-      debugPrint('[Push] Device token registration failed: $error');
+        await ref.read(apiClientProvider).post(
+          '/auth/device-token',
+          data: {
+            'token': token,
+            'platform': Platform.isIOS ? 'ios' : 'android',
+          },
+        );
+        _registeredDeviceToken = token;
+        await ref
+            .read(sharedPreferencesProvider)
+            .setString(kDeviceTokenPrefsKey, token);
+        return;
+      } catch (error) {
+        // A failed registration must never interrupt the session.
+        debugPrint('[Push] Device token registration failed: $error');
+        if (attempt == 2) return;
+        await Future<void>.delayed(Duration(seconds: 3 * (attempt + 1)));
+      }
     }
   }
 
@@ -273,7 +308,7 @@ class _KatishaAppState extends ConsumerState<KatishaApp> {
           ),
         );
         unawaited(
-          ref.read(ticketSyncServiceProvider).syncAllTickets(),
+          ref.read(ticketSyncServiceProvider).syncAllTickets(force: true),
         );
         break;
 
@@ -358,6 +393,7 @@ class _KatishaAppState extends ConsumerState<KatishaApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _notificationTapSub?.cancel();
     _socketEventSub?.cancel();
     _sessionSub?.cancel();
