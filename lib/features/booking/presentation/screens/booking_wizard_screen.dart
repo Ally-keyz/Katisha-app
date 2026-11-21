@@ -1122,8 +1122,17 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         // errors are transient. Only a successful track response with
         // paymentStatus 'failed' is an authoritative failure.
         (failure) {
-          if (failure is ServerFailure && failure.statusCode == 404) {
-            if (mounted) {
+          // Some deployed servers reject every hyphenated reference in their
+          // route middleware (HTTP 400 "Invalid reference code format"), so
+          // the public track endpoint can never resolve a real booking. When
+          // we know the booking id from the create response, fall back to the
+          // authenticated booking endpoint, which has no such restriction.
+          if (failure is ServerFailure &&
+              (failure.statusCode == 400 || failure.statusCode == 404)) {
+            final bookingId = _paymentWaitingBookingId;
+            if (bookingId != null && bookingId.isNotEmpty) {
+              unawaited(_verifyByBookingId());
+            } else if (mounted) {
               setState(() => _paymentError = null);
             }
           }
@@ -1138,6 +1147,26 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     } finally {
       _paymentVerifyInFlight = false;
     }
+  }
+
+  /// Fallback status check used when the public track endpoint cannot accept
+  /// our reference (e.g. an older server that rejects hyphenated codes).
+  /// Reads the stored payment status by booking id; webhooks/sweeper keep that
+  /// status authoritative, so a terminal result can still resolve the screen.
+  Future<void> _verifyByBookingId() async {
+    final bookingId = _paymentWaitingBookingId;
+    if (bookingId == null || bookingId.isEmpty) return;
+    final result = await _repo.getBooking(bookingId);
+    if (!mounted || !_paymentWaiting) return;
+    result.fold(
+      (_) {},
+      (booking) {
+        if (!_paymentBookingFound) {
+          setState(() => _paymentBookingFound = true);
+        }
+        _handlePaymentOutcomeFromBooking(booking);
+      },
+    );
   }
 
   /// Routes a fetched [Booking] to its correct terminal state (paid or failed).

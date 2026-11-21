@@ -121,8 +121,13 @@ class BookingRepository {
   Future<Either<Failure, Booking>> getBooking(String id) async {
     try {
       final response = await _apiClient.get('/bookings/$id');
-      final booking =
-          Booking.fromJson(response.data as Map<String, dynamic>);
+      final body = response.data as Map<String, dynamic>;
+      // The API interceptor unwraps { ok, data }, so `body` is
+      // { booking: {...}, ticket: {...} } — not the booking itself.
+      final bookingMap = body['booking'] is Map<String, dynamic>
+          ? body['booking'] as Map<String, dynamic>
+          : body;
+      final booking = Booking.fromJson(bookingMap);
       return Right(booking);
     } on DioException catch (e) {
       return Left(ApiClient.mapDioError(e));
