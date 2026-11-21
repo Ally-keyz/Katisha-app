@@ -141,6 +141,7 @@ class AppFr {
     'profile': 'Profil',
     'settings': 'Paramètres',
     'language': 'Langue',
+    'change_language': 'Changer la langue',
     'logout': 'Se déconnecter',
     'logout_confirm': 'Voulez-vous vraiment vous déconnecter?',
     'loyalty_points': 'Points de fidélité',

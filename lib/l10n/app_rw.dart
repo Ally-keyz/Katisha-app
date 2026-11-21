@@ -164,6 +164,7 @@ class AppRw {
     'profile': 'Umwirondoro',
     'settings': 'Amategeko',
     'language': 'Ururimi',
+    'change_language': 'Hindura ururimi',
     'logout': 'Sohoka',
     'logout_confirm': 'Uzi neza ushaka kusohoka?',
     'loyalty_points': 'Amabanga',

@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/error/failures.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/platform/badge_counts.dart';
 import '../../../../core/platform/platform_providers.dart';
 import '../../../../core/theme/app_colors.dart';
 import '../../../../core/theme/app_spacing.dart';
@@ -38,9 +41,14 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   bool _markingRead = false;
   bool _loadingMore = false;
 
+  /// Server-side unread count from `/notifications`. Null on older deployments
+  /// or when signed out, where the local cache is the best available source.
+  int? _serverUnreadCount;
+
   NotificationsRepository get _repo => ref.read(_notificationsRepoProvider);
 
-  int get _unreadCount => _notifications.where((n) => !n.read).length;
+  int get _unreadCount =>
+      _serverUnreadCount ?? _notifications.where((n) => !n.read).length;
 
   @override
   void initState() {
@@ -60,9 +68,13 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     // "session expired" error); just show the locally stored notifications.
     if (!ref.read(apiClientProvider).isAuthenticated) {
       final local = await ref.read(localNotificationStoreProvider).getAll();
+      await ref
+          .read(badgeCountsProvider.notifier)
+          .refresh(useLocalUnread: true);
       if (!mounted) return;
       setState(() {
         _notifications = [...local];
+        _serverUnreadCount = null;
         _error = null;
         _loading = false;
         _loadingMore = false;
@@ -77,16 +89,21 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
       (failure) {
         // An expired/invalid session behaves like the signed-out state: show
         // the empty "no notifications" screen instead of an error.
+        unawaited(
+          ref.read(badgeCountsProvider.notifier).refresh(useLocalUnread: true),
+        );
         if (failure is AuthFailure ||
             !ref.read(apiClientProvider).isAuthenticated) {
           setState(() {
             _error = null;
+            _serverUnreadCount = null;
             _loading = false;
             _loadingMore = false;
           });
         } else {
           setState(() {
             _error = failure.message;
+            _serverUnreadCount = null;
             _loading = false;
             _loadingMore = false;
           });
@@ -96,11 +113,17 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         // The locally stored notifications are only ever merged into page 1.
         // Reading the store decodes every persisted record, so doing it on each
         // appended page parsed the whole cache and then discarded the result.
+        final serverUnread = response.unreadCount;
+        await ref.read(badgeCountsProvider.notifier).refresh(
+              unreadCount: serverUnread,
+              useLocalUnread: serverUnread == null,
+            );
         if (_page == 1) {
           final local = await ref.read(localNotificationStoreProvider).getAll();
           if (!mounted) return;
           setState(() {
             _notifications = [...local, ...response.notifications];
+            _serverUnreadCount = serverUnread;
             _hasMore = _page < response.pages;
             _loading = false;
             _loadingMore = false;
@@ -109,6 +132,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         } else {
           setState(() {
             _notifications = [..._notifications, ...response.notifications];
+            _serverUnreadCount = serverUnread;
             _hasMore = _page < response.pages;
             _loading = false;
             _loadingMore = false;
@@ -123,39 +147,31 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     setState(() => _markingRead = true);
     await ref.read(localNotificationStoreProvider).markAllRead();
     final result = await _repo.markAllAsRead();
+    // The server response carries the authoritative post-update count. If the
+    // request failed, all locally visible rows were still marked read, so zero
+    // is the best count we can show.
+    final serverCount = result.fold<int?>((_) => null, (count) => count);
+    await ref.read(badgeCountsProvider.notifier).refresh(
+          unreadCount: serverCount,
+          useLocalUnread: serverCount == null,
+        );
     if (!mounted) return;
-    result.fold(
-      (_) => setState(() {
-        _markingRead = false;
-        _notifications = _notifications
-            .map(
-              (n) => NotificationModel(
-                id: n.id,
-                title: n.title,
-                message: n.message,
-                type: n.type,
-                read: true,
-                createdAt: n.createdAt,
-              ),
-            )
-            .toList();
-      }),
-      (_) => setState(() {
-        _markingRead = false;
-        _notifications = _notifications
-            .map(
-              (n) => NotificationModel(
-                id: n.id,
-                title: n.title,
-                message: n.message,
-                type: n.type,
-                read: true,
-                createdAt: n.createdAt,
-              ),
-            )
-            .toList();
-      }),
-    );
+    setState(() {
+      _markingRead = false;
+      _serverUnreadCount = serverCount ?? 0;
+      _notifications = _notifications
+          .map(
+            (n) => NotificationModel(
+              id: n.id,
+              title: n.title,
+              message: n.message,
+              type: n.type,
+              read: true,
+              createdAt: n.createdAt,
+            ),
+          )
+          .toList();
+    });
   }
 
   void _loadMore() {
@@ -190,11 +206,21 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     } else {
       await _repo.deleteNotification(notification.id);
     }
+    int? nextCount;
+    if (_serverUnreadCount != null) {
+      final adjusted = _serverUnreadCount! - (notification.read ? 0 : 1);
+      nextCount = adjusted < 0 ? 0 : adjusted;
+    }
+    await ref.read(badgeCountsProvider.notifier).refresh(
+          unreadCount: nextCount,
+          useLocalUnread: nextCount == null,
+        );
     if (!mounted) return;
     setState(() {
       _notifications = _notifications
           .where((n) => n.id != notification.id)
           .toList();
+      _serverUnreadCount = nextCount;
     });
   }
 

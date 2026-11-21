@@ -18,6 +18,10 @@ class BadgeCounts {
 class BadgeCountsNotifier extends Notifier<BadgeCounts> {
   bool _firstRefreshDone = false;
 
+  /// When signed in, the server's unread count is the source of truth. The
+  /// local store is only a fallback for signed-out/offline sessions.
+  int? _serverUnreadCount;
+
   @override
   BadgeCounts build() {
     // Counts are derived from the local stores only. The network sync is kicked
@@ -37,16 +41,26 @@ class BadgeCountsNotifier extends Notifier<BadgeCounts> {
     final ticketCount = await store.getActiveTicketCount();
 
     final notifications = await notifStore.getAll();
-    final notifCount = notifications.where((n) => !n.read).length;
+    final localUnread = notifications.where((n) => !n.read).length;
 
     state = BadgeCounts(
       ticketCount: ticketCount,
-      notificationCount: notifCount,
+      notificationCount: _serverUnreadCount ?? localUnread,
     );
   }
 
-  /// Recomputes both badges from their backing stores.
-  Future<void> refresh() => _refresh();
+  /// Recomputes both badges. Pass [unreadCount] from `/notifications` to make
+  /// the bottom-nav badge agree with the notifications page; pass
+  /// [useLocalUnread] when signed out so the local cache becomes authoritative
+  /// again.
+  Future<void> refresh({int? unreadCount, bool useLocalUnread = false}) async {
+    if (unreadCount != null) {
+      _serverUnreadCount = unreadCount < 0 ? 0 : unreadCount;
+    } else if (useLocalUnread) {
+      _serverUnreadCount = null;
+    }
+    await _refresh();
+  }
 }
 
 /// Provider for the bottom-nav badge counts.

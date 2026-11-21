@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../l10n/app_localizations.dart';
 import '../platform/badge_counts.dart';
+import '../theme/app_spacing.dart';
 
 import '../../features/splash/presentation/screens/splash_screen.dart';
 import '../../features/onboarding/presentation/screens/onboarding_screen.dart';
@@ -143,58 +144,67 @@ class _BottomNavBar extends ConsumerWidget {
     // to do its own Localizations lookup.
     final l10n = AppLocalizations.of(context);
 
-    return NavigationBar(
-      selectedIndex: currentIndex,
-      onDestinationSelected: (index) => context.go(paths[index]),
-      backgroundColor: Colors.white,
-      elevation: 0,
-      labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-      indicatorColor: const Color(0xFFDBEAFE),
-      indicatorShape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(4),
+    // Clip the bar itself, not just the selected indicator, so the whole
+    // bottom nav matches the rounded cards used elsewhere in the app.
+    // ClipRRect does not change layout, so the bar keeps its existing
+    // system-navigation safe-area handling.
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(
+        top: Radius.circular(AppSpacing.radiusLg),
       ),
-      surfaceTintColor: Colors.transparent,
-      destinations: [
-        NavigationDestination(
-          icon: const Icon(Icons.home_outlined),
-          selectedIcon: const Icon(Icons.home),
-          label: l10n.translate('nav_home'),
+      child: NavigationBar(
+        selectedIndex: currentIndex,
+        onDestinationSelected: (index) => context.go(paths[index]),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+        indicatorColor: const Color(0xFFDBEAFE),
+        indicatorShape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
         ),
-        NavigationDestination(
-          icon: _BadgeIcon(
-            icon: Icons.confirmation_num_outlined,
-            selectedIcon: Icons.confirmation_num,
-            selected: false,
-            count: badgeCounts.ticketCount,
-            color: const Color(0xFF0854AE),
+        surfaceTintColor: Colors.transparent,
+        destinations: [
+          NavigationDestination(
+            icon: const Icon(Icons.home_outlined),
+            selectedIcon: const Icon(Icons.home),
+            label: l10n.translate('nav_home'),
           ),
-          selectedIcon: _BadgeIcon(
-            icon: Icons.confirmation_num_outlined,
-            selectedIcon: Icons.confirmation_num,
-            selected: true,
-            count: badgeCounts.ticketCount,
-            color: const Color(0xFF0854AE),
+          NavigationDestination(
+            icon: _BadgeIcon(
+              icon: Icons.confirmation_num_outlined,
+              selectedIcon: Icons.confirmation_num,
+              selected: false,
+              count: badgeCounts.ticketCount,
+              color: const Color(0xFF0854AE),
+            ),
+            selectedIcon: _BadgeIcon(
+              icon: Icons.confirmation_num_outlined,
+              selectedIcon: Icons.confirmation_num,
+              selected: true,
+              count: badgeCounts.ticketCount,
+              color: const Color(0xFF0854AE),
+            ),
+            label: l10n.translate('nav_my_tickets'),
           ),
-          label: l10n.translate('nav_my_tickets'),
-        ),
-        NavigationDestination(
-          icon: _BadgeIcon(
-            icon: Icons.notifications_outlined,
-            selectedIcon: Icons.notifications,
-            selected: false,
-            count: badgeCounts.notificationCount,
-            color: Colors.red,
+          NavigationDestination(
+            icon: _BadgeIcon(
+              icon: Icons.notifications_outlined,
+              selectedIcon: Icons.notifications,
+              selected: false,
+              count: badgeCounts.notificationCount,
+              color: Colors.red,
+            ),
+            selectedIcon: _BadgeIcon(
+              icon: Icons.notifications_outlined,
+              selectedIcon: Icons.notifications,
+              selected: true,
+              count: badgeCounts.notificationCount,
+              color: Colors.red,
+            ),
+            label: l10n.translate('nav_alerts'),
           ),
-          selectedIcon: _BadgeIcon(
-            icon: Icons.notifications_outlined,
-            selectedIcon: Icons.notifications,
-            selected: true,
-            count: badgeCounts.notificationCount,
-            color: Colors.red,
-          ),
-          label: l10n.translate('nav_alerts'),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }

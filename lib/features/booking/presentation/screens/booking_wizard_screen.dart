@@ -1432,16 +1432,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     _refreshWizard();
   }
 
-  // ── Step icon data ──
-
-  static const _stepIcons = [
-    Icons.map_outlined,
-    Icons.business_outlined,
-    Icons.calendar_today_outlined,
-    Icons.people_outline,
-    Icons.credit_card_outlined,
-  ];
-
   @override
   Widget build(BuildContext context) {
     _scheduleBlinkSync();
@@ -1549,7 +1539,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              _buildStepIndicators(),
+              _buildProfileChip(),
             ],
           ),
         ],
@@ -1557,63 +1547,184 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     );
   }
 
-  Widget _buildStepIndicators() {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: List.generate(5, (i) {
-        final isDone = i < _currentStep;
-        final isActive = i == _currentStep;
+  /// Profile chip shown in place of the old booking-step icons.
+  ///
+  /// Guests who have just booked receive tokens but may not have a populated
+  /// [sessionProvider] yet, so both sources are considered when deciding
+  /// whether to offer "Log out".
+  Widget _buildProfileChip() {
+    final l10n = AppLocalizations.of(context);
+    final session = ref.watch(sessionProvider);
+    final isLoggedIn = session != null ||
+        _isLoggedIn ||
+        ref.read(apiClientProvider).isAuthenticated;
 
-        return Row(
+    final name = session?.name.trim() ?? '';
+    final username = session?.username.trim() ?? '';
+    final cachedName = _cachedUserName?.trim() ?? '';
+    final displayName = name.isNotEmpty
+        ? name
+        : username.isNotEmpty
+        ? username
+        : cachedName.isNotEmpty
+        ? cachedName
+        : l10n.translate('profile');
+
+    return PopupMenuButton<String>(
+      onSelected: (value) {
+        switch (value) {
+          case 'logout':
+            unawaited(_confirmLogout());
+            break;
+          case 'language':
+            _openLanguageSelection();
+            break;
+        }
+      },
+      position: PopupMenuPosition.under,
+      offset: const Offset(0, 8),
+      color: AppColors.white,
+      surfaceTintColor: Colors.transparent,
+      elevation: 4,
+      shadowColor: Colors.black26,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
+      ),
+      constraints: const BoxConstraints(minWidth: 190),
+      itemBuilder: (_) => [
+        if (isLoggedIn)
+          PopupMenuItem<String>(
+            value: 'logout',
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.logout_rounded,
+                  size: 18,
+                  color: AppColors.textSub,
+                ),
+                const SizedBox(width: AppSpacing.sm + 4),
+                Text(
+                  l10n.translate('logout'),
+                  style: AppTypography.bodyMedium,
+                ),
+              ],
+            ),
+          ),
+        PopupMenuItem<String>(
+          value: 'language',
+          child: Row(
+            children: [
+              const Icon(
+                Icons.language_rounded,
+                size: 18,
+                color: AppColors.textSub,
+              ),
+              const SizedBox(width: AppSpacing.sm + 4),
+              Text(
+                l10n.translate('change_language'),
+                style: AppTypography.bodyMedium,
+              ),
+            ],
+          ),
+        ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm + 2,
+          vertical: AppSpacing.xs + 2,
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.white,
+          borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
+          border: Border.all(color: AppColors.border),
+        ),
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (i > 0)
-              Container(
-                width: 8,
-                height: 2,
-                color: isDone || isActive
-                    ? AppColors.primary
-                    : AppColors.border,
-              ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              decoration: BoxDecoration(
-                color: isActive
-                    ? AppColors.primary
-                    : isDone
-                    ? AppColors.primaryLight
-                    : AppColors.white,
-                borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
-                border: Border.all(
-                  color: isActive || isDone
-                      ? AppColors.primary
-                      : AppColors.border,
-                  width: 1,
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  isDone
-                      ? const Icon(
-                          Icons.check,
-                          size: 10,
-                          color: AppColors.primary,
-                        )
-                      : Icon(
-                          _stepIcons[i],
-                          size: 10,
-                          color: isActive
-                              ? AppColors.white
-                              : AppColors.textMuted,
-                        ),
-                ],
+            CircleAvatar(
+              radius: 13,
+              backgroundColor: AppColors.primaryLight,
+              child: const Icon(
+                Icons.person_rounded,
+                size: 16,
+                color: AppColors.primary,
               ),
             ),
+            const SizedBox(width: AppSpacing.sm),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 120),
+              child: Text(
+                displayName,
+                overflow: TextOverflow.ellipsis,
+                style: AppTypography.labelMedium.copyWith(
+                  color: AppColors.text,
+                ),
+              ),
+            ),
+            const SizedBox(width: 2),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 16,
+              color: AppColors.textMuted,
+            ),
           ],
-        );
-      }),
+        ),
+      ),
     );
+  }
+
+  Future<void> _confirmLogout() async {
+    final l10n = AppLocalizations.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.white,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
+        ),
+        title: Text(
+          l10n.translate('logout'),
+          style: AppTypography.titleMedium.copyWith(fontWeight: FontWeight.w700),
+        ),
+        content: Text(
+          l10n.translate('logout_confirm'),
+          style: AppTypography.bodySmall.copyWith(color: AppColors.textSub),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              l10n.translate('cancel'),
+              style: AppTypography.labelLarge.copyWith(
+                color: AppColors.textSub,
+              ),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: AppColors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppSpacing.radiusSm),
+              ),
+              textStyle: AppTypography.buttonMedium,
+            ),
+            child: Text(l10n.translate('logout')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await ref.read(sessionProvider.notifier).logout();
+    if (!mounted) return;
+    context.go('/login');
+  }
+
+  void _openLanguageSelection() {
+    context.go('/onboarding');
   }
 
   // ── Progress bar ──

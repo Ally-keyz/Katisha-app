@@ -141,6 +141,7 @@ class AppSw {
     'profile': 'Wasifu',
     'settings': 'Mipangilio',
     'language': 'Lugha',
+    'change_language': 'Badilisha Lugha',
     'logout': 'Toka',
     'logout_confirm': 'Una uhakika unataka kutoka?',
     'loyalty_points': 'Pointi za Uaminifu',

@@ -188,6 +188,10 @@ class _KatishaAppState extends ConsumerState<KatishaApp>
       _socketEventSub = null;
       _registeredDeviceToken = null;
       ref.read(socketServiceProvider).disconnect();
+      // The server unread count belongs to the previous account.
+      unawaited(
+        ref.read(badgeCountsProvider.notifier).refresh(useLocalUnread: true),
+      );
       return;
     }
 

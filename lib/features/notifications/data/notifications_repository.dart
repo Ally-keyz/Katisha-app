@@ -29,10 +29,16 @@ class NotificationsRepository {
     }
   }
 
-  Future<Either<Failure, void>> markAllAsRead() async {
+  /// Returns the server's post-update unread count when available so the
+  /// bottom-nav badge and the notifications page stay in sync.
+  Future<Either<Failure, int?>> markAllAsRead() async {
     try {
-      await _apiClient.patch('/notifications/read-all');
-      return const Right(null);
+      final response = await _apiClient.patch('/notifications/read-all');
+      final raw = response.data;
+      final count = raw is Map<String, dynamic>
+          ? raw['unreadCount'] as int?
+          : null;
+      return Right(count);
     } on DioException catch (e) {
       return Left(ApiClient.mapDioError(e));
     } catch (e) {

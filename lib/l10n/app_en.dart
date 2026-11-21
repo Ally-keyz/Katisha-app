@@ -138,6 +138,7 @@ class AppEn {
     'profile': 'Profile',
     'settings': 'Settings',
     'language': 'Language',
+    'change_language': 'Change Language',
     'logout': 'Log Out',
     'logout_confirm': 'Are you sure you want to log out?',
     'loyalty_points': 'Loyalty Points',
