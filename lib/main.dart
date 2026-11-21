@@ -385,6 +385,7 @@ class _KatishaAppState extends ConsumerState<KatishaApp>
         event.name == 'booking_ready' ||
         event.name == 'booking_issued' ||
         event.name == 'booking_paid' ||
+        event.name == 'payment:confirmed' ||
         event.name == 'booking_closed' ||
         event.name == 'agent_reminder') {
       unawaited(ref.read(badgeCountsProvider.notifier).refresh());

@@ -329,11 +329,12 @@ class AppFr {
 
     // ── Payment Result ─────────────────────────────
     'insufficient_funds': 'Fonds insuffisants',
-    'payment_failed_message': 'Le paiement n\'a pas pu être effectué car il n\'y a pas assez de fonds sur votre compte mobile money pour couvrir ce montant.',
+    'payment_failed_message': 'Nous n\'avons pas pu confirmer ce paiement. Vérifiez votre compte mobile money et réessayez.',
     'no_money_deducted': 'Aucun montant n\'a été débité et votre place a été libérée.',
     'done': 'Terminé',
     'payment_confirmed_msg': 'Paiement confirmé !',
     'payment_failed_title': 'Paiement échoué',
+    'payment_still_processing': 'Votre paiement est encore en cours. Nous vérifions auprès du prestataire — ne payez pas à nouveau.',
 
     // ── Calendar Months ────────────────────────────
 

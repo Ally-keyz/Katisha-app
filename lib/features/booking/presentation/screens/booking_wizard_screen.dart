@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,6 +11,7 @@ import '../../../../core/auth/session.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/socket_service.dart';
 import '../../../../core/error/failures.dart';
+import '../../../../core/platform/badge_counts.dart';
 import '../../../../core/platform/platform_providers.dart';
 import '../../../../core/platform/location_service.dart';
 import '../../../../core/platform/ticket_sync_service.dart';
@@ -208,13 +210,19 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   bool _paymentFailed = false;
   String? _paymentFailureReason;
   Timer? _paymentPollTimer;
-  Timer? _paymentAbandonTimer;
+  Timer? _paymentTimeoutTimer;
   Timer? _postConfirmTimer;
   bool _paymentVerifyInFlight = false;
   int _paymentPollIntervalMs = _minPaymentPollMs;
 
+  bool _paymentBookingFound = false;
+  bool _paymentSlow = false;
+
   static const int _minPaymentPollMs = 1000;
   static const int _maxPaymentPollMs = 4000;
+  static const int _slowPaymentPollMs = 10000;
+  static const Duration _bookingLookupGrace = Duration(seconds: 90);
+  static const String _referenceAlphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
   late AnimationController _progressAnimController;
   late AnimationController _confirmAnimController;
@@ -363,7 +371,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     _scrollController.dispose();
     _paymentSub?.cancel();
     _paymentPollTimer?.cancel();
-    _paymentAbandonTimer?.cancel();
+    _paymentTimeoutTimer?.cancel();
     _postConfirmTimer?.cancel();
     _autoAdvanceTimer?.cancel();
     super.dispose();
@@ -735,11 +743,13 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       _paymentError = null;
       _paymentFailed = false;
       _paymentFailureReason = null;
+      _paymentBookingFound = false;
+      _paymentSlow = false;
       _cancellingWaiting = false;
       _paymentPollTimer?.cancel();
       _paymentPollTimer = null;
-      _paymentAbandonTimer?.cancel();
-      _paymentAbandonTimer = null;
+      _paymentTimeoutTimer?.cancel();
+      _paymentTimeoutTimer = null;
     });
     _progressAnimController
       ..reset()
@@ -760,12 +770,20 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       return;
     }
 
+    // Created before the request: if the create call times out or returns 500
+    // *after* pawaPay has pushed the payment prompt, this reference lets the
+    // polling code find the booking and keep it in "processing" rather than
+    // wrongly declaring the payment failed.
+    final referenceCode = _generateBookingReference();
     setState(() {
       _isSubmitting = true;
       _submitError = null;
+      _paymentBookingFound = false;
+      _paymentSlow = false;
     });
 
     final data = <String, dynamic>{
+      'referenceCode': referenceCode,
       'routeId': _selectedRoute!.id,
       'agencyId': _selectedRoute!.agency.id,
       'origin': _origin,
@@ -807,13 +825,20 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
 
     result.fold(
       (failure) {
+        // A 4xx validation error means the booking was never created — show it
+        // on the form. Timeouts, network errors and 5xx are ambiguous: the
+        // booking may exist and the pawaPay prompt may already be on the
+        // customer's phone, so keep polling our reference before deciding.
+        if (_isAmbiguousCreateFailure(failure)) {
+          _enterWaitingForUnconfirmedBooking(referenceCode, failure.message);
+          return;
+        }
         setState(() {
           _isSubmitting = false;
           _bookingConfirmed = false;
           _paymentWaiting = false;
-          _submitError = null;
-          _paymentFailed = true;
-          _paymentFailureReason = failure.message;
+          _submitError = failure.message;
+          _paymentFailed = false;
         });
       },
       (bookingData) {
@@ -915,13 +940,73 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             _paymentWaiting = true;
             _paymentWaitingBookingId = bookingId;
             _paymentWaitingReference = refCode;
+            _paymentBookingFound = true;
           });
           _listenForPayment(bookingId);
           _startPaymentPolling();
-          _startPaymentAbandonTimer();
+          _startPaymentVerificationTimer();
         }
       },
     );
+  }
+
+  /// Client-side booking reference, accepted by the server. Used to keep
+  /// tracking the booking when the create response is lost after pawaPay has
+  /// already pushed the "to pay" prompt.
+  String _generateBookingReference() {
+    final random = Random.secure();
+    String block(int length) => List.generate(
+          length,
+          (_) => _referenceAlphabet[random.nextInt(_referenceAlphabet.length)],
+        ).join();
+    return 'BOK-${block(4)}-${block(8)}';
+  }
+
+  bool _isAmbiguousCreateFailure(Failure failure) {
+    if (failure is TimeoutFailure ||
+        failure is NetworkFailure ||
+        failure is UnknownFailure) {
+      return true;
+    }
+    if (failure is ServerFailure) {
+      final code = failure.statusCode;
+      // 4xx (except a gateway-style 408/429) means the request was rejected
+      // before a booking could be created. Everything else may have reached
+      // the server and pawaPay, so verify before telling the user it failed.
+      return code == 408 ||
+          code == 429 ||
+          code == null ||
+          code >= 500;
+    }
+    return false;
+  }
+
+  /// Enters the waiting view for a booking whose create response was lost.
+  /// No failure screen is shown until tracking proves the outcome.
+  void _enterWaitingForUnconfirmedBooking(
+    String reference,
+    String? createFailureMessage,
+  ) {
+    if (!mounted) return;
+    setState(() {
+      _isSubmitting = false;
+      _bookingConfirmed = false;
+      _paymentFailed = false;
+      _paymentWaiting = true;
+      _paymentWaitingReference = reference;
+      _paymentWaitingBookingId = null;
+      _paymentFailureReason = null;
+      _paymentError = null;
+      _paymentBookingFound = false;
+      _paymentSlow = false;
+    });
+    // Do not surface the raw create error as a failure: a 500/timeout here is
+    // exactly the ambiguous case this flow is designed to resolve by polling.
+    debugPrint('[Booking] create response ambiguous ($createFailureMessage); '
+        'tracking $reference');
+    _listenForPayment(reference);
+    _startPaymentPolling();
+    _startPaymentVerificationTimer();
   }
 
   void _scheduleDepartureAlerts(String bookingId) {
@@ -1006,7 +1091,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
             data['referenceCode'] == _paymentWaitingReference) {
           _handlePaymentOutcome(
             paid: true,
-            bookingId: dataBookingId.isNotEmpty ? dataBookingId : bookingId,
+            bookingId: dataBookingId.isNotEmpty
+                ? dataBookingId
+                : (_paymentWaitingBookingId ?? ''),
             referenceCode: _paymentWaitingReference,
             ticketImage: data['ticketImage'] as String?,
           );
@@ -1030,21 +1117,23 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       final result = await _repo.trackBooking(reference);
       if (!mounted) return;
       result.fold(
-        // A 400 from the track endpoint is a terminal payment failure (e.g.
-        // insufficient funds) — treat it like `paymentStatus: 'failed'` and go
-        // straight to the failure screen instead of staying "pending". Any
-        // other polling error is transient and we keep waiting.
+        // Tracking errors are NOT payment failures. A 404 just means the
+        // create request is still committing (or never committed); 5xx/network
+        // errors are transient. Only a successful track response with
+        // paymentStatus 'failed' is an authoritative failure.
         (failure) {
-          if (failure is ServerFailure && failure.statusCode == 400) {
-            _handlePaymentOutcome(
-              paid: false,
-              bookingId: _paymentWaitingBookingId ?? '',
-              referenceCode: reference,
-              reason: failure.message,
-            );
+          if (failure is ServerFailure && failure.statusCode == 404) {
+            if (mounted) {
+              setState(() => _paymentError = null);
+            }
           }
         },
-        _handlePaymentOutcomeFromBooking,
+        (booking) {
+          if (mounted && !_paymentBookingFound) {
+            setState(() => _paymentBookingFound = true);
+          }
+          _handlePaymentOutcomeFromBooking(booking);
+        },
       );
     } finally {
       _paymentVerifyInFlight = false;
@@ -1083,8 +1172,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       );
     } else {
       // Still processing/pending — keep the waiting UI and let the next poll
-      // (or the abandon timeout) resolve it. No error is surfaced here because
-      // being "pending" is a normal in-flight state, not a failure.
+      // (or the verification timer) resolve it. No error is surfaced here
+      // because being "pending" is a normal in-flight state, not a failure.
     }
   }
 
@@ -1098,7 +1187,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   }) {
     if (_paymentFailed || _bookingConfirmed || !mounted) return;
     _stopPaymentPolling();
-    _stopPaymentAbandonTimer();
+    _stopPaymentVerificationTimer();
     _paymentSub?.cancel();
 
     if (paid) {
@@ -1107,14 +1196,20 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
       // Keep the (now paid) ticket fully available offline — the booking JSON
       // was cached at creation, so mark it paid and save the image while we
       // still have internet.
-      if (ticketImage != null && ticketImage.isNotEmpty) {
+      // Patch the cached booking even when the image is not ready yet: the
+      // badge derives from paymentStatus, so it must become 'paid' as soon as
+      // the server confirms the payment rather than waiting for an image.
+      unawaited(
         _cacheTicketLocally(
           bookingId,
           const <String, dynamic>{},
           ticketImage,
           const {'paymentStatus': 'paid'},
-        );
-      }
+        ),
+      );
+      unawaited(
+        ref.read(badgeCountsProvider.notifier).refresh(),
+      );
       ref
           .read(localNotificationStoreProvider)
           .add(
@@ -1145,6 +1240,12 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         if (mounted) context.go('/home');
         return;
       }
+      // A failed/cancelled booking must never contribute to the bottom-nav
+      // ticket badge. Drop any local checkout cache for it as well.
+      if (bookingId.isNotEmpty) {
+        unawaited(ref.read(localTicketStoreProvider).removeTicket(bookingId));
+        unawaited(ref.read(badgeCountsProvider.notifier).refresh());
+      }
       _recordFailureNotification(bookingId, referenceCode ?? '', reason);
       setState(() {
         _paymentWaiting = false;
@@ -1164,7 +1265,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   /// while the payment stays pending. A flat 1s `Timer.periodic` hammered the
   /// endpoint with the same answer for the whole window; the authoritative
   /// outcome still arrives promptly because the socket pushes
-  /// `payment:confirmed` and the abandon timer does a final check at 40s.
+  /// `payment:confirmed` and the verification timer does a final check at 90s.
   void _startPaymentPolling() {
     _paymentPollIntervalMs = _minPaymentPollMs;
     _scheduleNextPaymentPoll();
@@ -1180,9 +1281,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         if (!mounted) return;
         // Keep polling only while we're still waiting on a terminal outcome.
         if (!_paymentWaiting) return;
+        final upperBound =
+            _paymentSlow ? _slowPaymentPollMs : _maxPaymentPollMs;
         _paymentPollIntervalMs = (_paymentPollIntervalMs * 2).clamp(
           _minPaymentPollMs,
-          _maxPaymentPollMs,
+          upperBound,
         );
         _scheduleNextPaymentPoll();
       },
@@ -1194,40 +1297,39 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     _paymentPollTimer = null;
   }
 
-  /// Hard cap on how long the waiting screen stays: never longer than 40s. Do
-  /// one final verification and, if the payment still isn't confirmed as paid,
-  /// abandon the booking (releasing the held seat) and surface the failed
-  /// screen — so it never sits on "pending" forever.
-  void _startPaymentAbandonTimer() {
-    _paymentAbandonTimer?.cancel();
-    _paymentAbandonTimer = Timer(const Duration(seconds: 40), () async {
+  /// After the lookup grace period, decide between "still processing" and
+  /// "never created". A booking that exists but is still processing is kept in
+  /// the waiting state with slower polling — pawaPay prompts can stay pending
+  /// for a long time, and abandoning here could release a seat for a payment
+  /// that is about to complete. Only a booking that never appears is failed.
+  void _startPaymentVerificationTimer() {
+    _paymentTimeoutTimer?.cancel();
+    _paymentTimeoutTimer = Timer(_bookingLookupGrace, () async {
+      if (!mounted) return;
       final reference = _paymentWaitingReference;
       final bookingId = _paymentWaitingBookingId;
-      var terminal = false;
+      var resolved = false;
+
       if (reference != null && reference.isNotEmpty) {
         final result = await _repo.trackBooking(reference);
+        if (!mounted) return;
         result.fold(
-          // Same rule as the poller: 400 means the payment already failed
-          // terminally (e.g. insufficient funds) — fail immediately.
           (failure) {
-            if (failure is ServerFailure && failure.statusCode == 400) {
-              _handlePaymentOutcome(
-                paid: false,
-                bookingId: bookingId ?? '',
-                referenceCode: reference,
-                reason: failure.message,
-              );
-              terminal = true;
-            }
+            // A transient tracking error is not a payment outcome. If the
+            // booking was already seen, keep waiting; otherwise fall through
+            // to the "never created" decision below.
           },
           (b) {
+            if (mounted) {
+              setState(() => _paymentBookingFound = true);
+            }
             if (b.paymentStatus == 'paid') {
               _handlePaymentOutcome(
                 paid: true,
                 bookingId: b.id.isNotEmpty ? b.id : (bookingId ?? ''),
                 referenceCode: b.referenceCode,
               );
-              terminal = true;
+              resolved = true;
             } else if (b.paymentStatus == 'failed') {
               _handlePaymentOutcome(
                 paid: false,
@@ -1235,7 +1337,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 referenceCode: b.referenceCode,
                 reason: b.rejectionReason,
               );
-              terminal = true;
+              resolved = true;
             } else if (b.status == 'cancelled') {
               _handlePaymentOutcome(
                 paid: false,
@@ -1243,17 +1345,27 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 referenceCode: b.referenceCode,
                 cancelled: true,
               );
-              terminal = true;
+              resolved = true;
             }
           },
         );
       }
-      if (terminal || !mounted) return;
-      // Still not paid after 40s — abandon to release the seat and fail.
-      if (bookingId != null && bookingId.isNotEmpty) {
-        await _repo.abandonBooking(bookingId);
+
+      if (resolved || !mounted) return;
+
+      if (_paymentBookingFound) {
+        // Processing is not failure. Slow the polls and keep the waiting UI up
+        // until pawaPay reports a terminal status (or the user cancels).
+        setState(() {
+          _paymentSlow = true;
+          _paymentError = null;
+          _paymentPollIntervalMs = _maxPaymentPollMs;
+        });
+        return;
       }
-      if (!mounted) return;
+
+      // No booking ever appeared under our reference: the create request did
+      // not commit. Report a neutral failure — never assume insufficient funds.
       _handlePaymentOutcome(
         paid: false,
         bookingId: bookingId ?? '',
@@ -1262,9 +1374,9 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     });
   }
 
-  void _stopPaymentAbandonTimer() {
-    _paymentAbandonTimer?.cancel();
-    _paymentAbandonTimer = null;
+  void _stopPaymentVerificationTimer() {
+    _paymentTimeoutTimer?.cancel();
+    _paymentTimeoutTimer = null;
   }
 
   void _recordFailureNotification(
@@ -4173,8 +4285,8 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
   // ── PAYMENT FAILED VIEW ──
 
   // Matches the web frontend's failed state (`PaymentStatus.tsx`): a red
-  // status with a clear reason and a retry action. The user is told the
-  // payment failed (mostly due to insufficient funds) and shown how to retry.
+  // status with the server's actual reason (if any) and a retry action. Never
+  // hard-code a cause — "processing" is not the same as "insufficient funds".
   Widget _buildPaymentFailedView() {
     final l10n = AppLocalizations.of(context);
     final reason =
@@ -4211,7 +4323,7 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                   ),
                   const SizedBox(height: AppSpacing.lg),
                   Text(
-                    l10n.translate('insufficient_funds'),
+                    l10n.translate('payment_failed_title'),
                     style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.w700,
@@ -4362,6 +4474,17 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                       ),
                       textAlign: TextAlign.center,
                     ),
+                    if (_paymentSlow) ...[
+                      const SizedBox(height: AppSpacing.sm),
+                      Text(
+                        l10n.translate('payment_still_processing'),
+                        style: AppTypography.bodySmall.copyWith(
+                          color: AppColors.textSub,
+                          height: 1.4,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
                     const SizedBox(height: AppSpacing.lg),
 
                     Text(

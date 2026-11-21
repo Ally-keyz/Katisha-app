@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../network/api_client.dart';
 import '../network/media_url.dart';
+import 'badge_counts.dart';
 import 'local_ticket_store.dart';
 import 'notification_service.dart';
 import 'platform_providers.dart';
@@ -37,7 +38,15 @@ class TicketSyncService {
   /// sync that runs on every app action does not re-schedule the same alarms.
   final Map<String, String> _scheduledAlerts = {};
 
-  TicketSyncService(this._api, this._store, this._notifications);
+  /// Recomputes bottom-nav badges after the local cache is rewritten.
+  final Future<void> Function()? _onTicketsChanged;
+
+  TicketSyncService(
+    this._api,
+    this._store,
+    this._notifications, {
+    Future<void> Function()? onTicketsChanged,
+  }) : _onTicketsChanged = onTicketsChanged;
 
   /// Whether a sync is currently in flight.
   bool get isSyncing => _syncing;
@@ -128,6 +137,12 @@ class TicketSyncService {
         page++;
         if (page > pages) break;
       }
+      // Sync just refreshed the authoritative statuses. Drop failed/cancelled
+      // bookings that may still be cached from an old checkout attempt so the
+      // badge cannot count them as active tickets.
+      await _store.pruneUnsuccessfulTickets();
+      final onChanged = _onTicketsChanged;
+      if (onChanged != null) await onChanged();
       completed = true;
     } catch (_) {
       // Best-effort background sync — never crash the app on network errors.
@@ -213,6 +228,8 @@ final ticketSyncServiceProvider = Provider<TicketSyncService>((ref) {
     ref.read(apiClientProvider),
     ref.read(localTicketStoreProvider),
     ref.read(notificationServiceProvider),
+    onTicketsChanged: () =>
+        ref.read(badgeCountsProvider.notifier).refresh(),
   );
 });
 

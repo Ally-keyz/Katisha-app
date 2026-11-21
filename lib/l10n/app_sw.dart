@@ -329,11 +329,12 @@ class AppSw {
 
     // ── Payment Result ─────────────────────────────
     'insufficient_funds': 'Fedha haitoshi',
-    'payment_failed_message': 'Malipo hayakuweza kukamilika kwa sababu hakuna fedha za kutosha kwenye akaunti yako ya mobile money kufidia kiasi hiki.',
+    'payment_failed_message': 'Hatukuweza kuthibitisha malipo haya. Angalia akaunti yako ya mobile money na ujaribu tena.',
     'no_money_deducted': 'Hakuna fedha zilizokatwa na kiti chako kimetolewa.',
     'done': 'Imekamilika',
     'payment_confirmed_msg': 'Malipo Yamethibitishwa!',
     'payment_failed_title': 'Malipo Yameshindikana',
+    'payment_still_processing': 'Malipo yako bado yanaendelea. Tunakagua na mtoa huduma wa malipo — tafadhali usilipe tena.',
 
     // ── Calendar Months ────────────────────────────
 

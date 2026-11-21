@@ -326,11 +326,12 @@ class AppEn {
 
     // ── Payment Result ─────────────────────────────
     'insufficient_funds': 'Insufficient funds',
-    'payment_failed_message': 'The payment could not be completed because there are not enough funds in your mobile money account to cover this amount.',
+    'payment_failed_message': 'We could not confirm this payment. Please check your mobile money account and try again.',
     'no_money_deducted': 'No money was deducted and your seat has been released.',
     'done': 'Done',
     'payment_confirmed_msg': 'Payment Confirmed!',
     'payment_failed_title': 'Payment Failed',
+    'payment_still_processing': 'Your payment is still being processed. We are checking with the payment provider — please do not pay again.',
 
     // ── Calendar Months ────────────────────────────
 

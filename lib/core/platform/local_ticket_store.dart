@@ -178,8 +178,13 @@ class LocalTicketStore {
     } catch (_) {}
   }
 
-  /// Counts tickets that are still active (not cancelled/rejected and not past
-  /// their travel date). Used for the "My Tickets" badge.
+  /// Counts booked tickets that are actually paid and still upcoming.
+  ///
+  /// Checkout caches a booking as soon as the server accepts it, with
+  /// `status: confirmed` and `paymentStatus: processing`. Counting that as an
+  /// active ticket made the bottom-nav badge include failed and abandoned
+  /// payments. Only a confirmed payment counts; legacy caches written before
+  /// `paymentStatus` existed still count when the ticket was issued.
   Future<int> getActiveTicketCount() async {
     final index = await _readIndex();
     final now = DateTime.now();
@@ -187,10 +192,20 @@ class LocalTicketStore {
     int count = 0;
     for (final raw in index.values) {
       try {
-        final json = jsonDecode(raw) as Map<String, dynamic>;
-        final status = (json['status'] as String?) ?? '';
-        if (status == 'cancelled' || status == 'rejected') continue;
-        final travelDateStr = json['travelDate'] as String?;
+        final booking = jsonDecode(raw) as Map<String, dynamic>;
+        final status = (booking['status'] as String?)?.toLowerCase() ?? '';
+        if (status == 'cancelled' || status == 'rejected' || status == 'failed') {
+          continue;
+        }
+        final paymentStatus =
+            (booking['paymentStatus'] as String?)?.toLowerCase() ?? '';
+        if (paymentStatus.isEmpty) {
+          // Legacy entry: an issued ticket could only exist after payment.
+          if (status != 'issued') continue;
+        } else if (paymentStatus != 'paid') {
+          continue;
+        }
+        final travelDateStr = booking['travelDate'] as String?;
         if (travelDateStr == null) continue;
         final date = DateTime.tryParse(travelDateStr);
         if (date == null) continue;
@@ -200,6 +215,45 @@ class LocalTicketStore {
       } catch (_) {}
     }
     return count;
+  }
+
+  /// Removes cached bookings the server has marked failed/cancelled, so a
+  /// previous checkout attempt can never keep inflating the ticket badge.
+  /// Called after a successful ticket sync, which has just refreshed the
+  /// authoritative statuses in the index.
+  Future<void> pruneUnsuccessfulTickets() async {
+    final index = await _readIndex();
+    final imageUrls = await _readImageUrls();
+    final doomed = <String>[];
+
+    for (final entry in index.entries) {
+      try {
+        final booking = jsonDecode(entry.value) as Map<String, dynamic>;
+        final status = (booking['status'] as String?)?.toLowerCase() ?? '';
+        final paymentStatus =
+            (booking['paymentStatus'] as String?)?.toLowerCase() ?? '';
+        if (status == 'cancelled' ||
+            status == 'rejected' ||
+            status == 'failed' ||
+            paymentStatus == 'failed' ||
+            paymentStatus == 'refunded') {
+          doomed.add(entry.key);
+        }
+      } catch (_) {}
+    }
+    if (doomed.isEmpty) return;
+
+    for (final id in doomed) {
+      index.remove(id);
+      imageUrls.remove(id);
+      try {
+        final dir = await _ticketDir();
+        final file = File('${dir.path}/$id.png');
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+    }
+    await _writeIndex(index);
+    await _prefs.setString(_imageUrlIndexKey, jsonEncode(imageUrls));
   }
 
   /// Resolves (and creates) the ticket image folder once per process. The

@@ -328,11 +328,12 @@ class AppRw {
 
     // ── Payment Result ─────────────────────────────
     'insufficient_funds': 'Nta mafaranga ahagije',
-    'payment_failed_message': 'Kwishyura ntibyashobotse kuko nta mafaranga ahagije ari kuri konti yawe ya mobile money kugira ngo icumbi ry\'aya ma faranga.',
+    'payment_failed_message': 'Ntibyashoboye kwemeza kwishyura kwawe. Reba konti yawe ya mobile money wongere ugerageze.',
     'no_money_deducted': 'Nta mafaranga yakurwe kandi ikicaro cyawe cyarekuriwe.',
     'done': 'Byarangiye',
     'payment_confirmed_msg': 'Kwishyura Byemejwe!',
     'payment_failed_title': 'Kwishyura Byananiranye',
+    'payment_still_processing': 'Kwishyura kwawe kuracyari mu nzira. Turi kukugenzana n\'uwatanze serivisi y\'ubwishyu — ntuwishyure kandi.',
 
     // ── Calendar Months ────────────────────────────
 
