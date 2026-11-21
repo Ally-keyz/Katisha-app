@@ -847,12 +847,31 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         final accessToken = bookingData['accessToken'] as String?;
         final refreshToken = bookingData['refreshToken'] as String?;
         if (accessToken != null && refreshToken != null) {
-          ref
-              .read(apiClientProvider)
-              .setTokens(accessToken: accessToken, refreshToken: refreshToken);
-          // The user is now logged in — sync their tickets to local storage so
-          // they can be viewed offline.
-          startBackgroundTicketSync(ref);
+          // Guest checkout creates an account on the server. Adopt it into the
+          // session immediately — web does the same even when the payment is
+          // still processing or has failed. This is also what makes the profile
+          // chip show the real name and lets main.dart register the FCM token.
+          final rawUser = bookingData['user'];
+          final userMap = rawUser is Map
+              ? Map<String, dynamic>.from(rawUser)
+              : <String, dynamic>{};
+          final serverName = (userMap['name'] as String?)?.trim() ?? '';
+          final serverUsername = (userMap['username'] as String?)?.trim() ?? '';
+          final resolvedName = serverName.isNotEmpty
+              ? serverName
+              : serverUsername.isNotEmpty
+              ? serverUsername
+              : guestName;
+
+          _isLoggedIn = true;
+          _cachedUserName = resolvedName;
+          setState(() {});
+
+          unawaited(_adoptGuestAccount(
+            user: userMap,
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+          ));
         }
 
         // Extract booking details from either flat response or nested booking object
@@ -948,6 +967,31 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         }
       },
     );
+  }
+
+  /// Persists the guest account and enables notifications after checkout.
+  /// Runs after the response has already been handled so a slow secure-storage
+  /// write or permission prompt never delays the confirmation UI.
+  Future<void> _adoptGuestAccount({
+    required Map<String, dynamic> user,
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    try {
+      await ref.read(sessionProvider.notifier).adoptFromBooking(
+            user: user,
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+          );
+      // Android 13+ blocks all notifications until this is granted. Guests
+      // never pass through the login screen, which used to be the only place
+      // that asked for it.
+      await ref.read(notificationServiceProvider).requestPermission();
+      if (!mounted) return;
+      startBackgroundTicketSync(ref);
+    } catch (e) {
+      debugPrint('[Booking] Could not finish guest sign-in: $e');
+    }
   }
 
   /// Client-side booking reference, accepted by the server. Used to keep
@@ -1562,12 +1606,15 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     final name = session?.name.trim() ?? '';
     final username = session?.username.trim() ?? '';
     final cachedName = _cachedUserName?.trim() ?? '';
+    final typedName = _guestNameController.text.trim();
     final displayName = name.isNotEmpty
         ? name
         : username.isNotEmpty
         ? username
         : cachedName.isNotEmpty
         ? cachedName
+        : typedName.isNotEmpty
+        ? typedName
         : l10n.translate('profile');
 
     return PopupMenuButton<String>(
@@ -1636,7 +1683,6 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
         decoration: BoxDecoration(
           color: AppColors.white,
           borderRadius: BorderRadius.circular(AppSpacing.radiusFull),
-          border: Border.all(color: AppColors.border),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,

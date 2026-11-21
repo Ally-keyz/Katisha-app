@@ -92,6 +92,10 @@ abstract class NotificationService {
   /// Handles a snooze action — reschedules the alert for 5 minutes later.
   Future<void> handleSnooze(String bookingId);
 
+  /// The local notification that launched the app from a terminated state,
+  /// if any. Needed because background isolate callbacks cannot use plugins.
+  Future<NotificationPayload?> getLaunchNotification();
+
   /// Stream that emits when a notification is tapped (for deep linking).
   Stream<NotificationPayload> get onNotificationTapped;
 

@@ -861,6 +861,15 @@ class NotificationServiceImpl implements NotificationService {
         .join('&');
   }
 
+  @override
+  Future<NotificationPayload?> getLaunchNotification() async {
+    final details = await _plugin.getNotificationAppLaunchDetails();
+    if (details?.didNotificationLaunchApp != true) return null;
+    final payload = details?.notificationResponse?.payload;
+    if (payload == null || payload.isEmpty) return null;
+    return NotificationPayload.fromMap(_parsePayload(payload));
+  }
+
   Map<String, String> _parsePayload(String encoded) {
     return Uri.splitQueryString(encoded);
   }
@@ -869,26 +878,15 @@ class NotificationServiceImpl implements NotificationService {
 /// Handles notification actions while the app is terminated or in the
 /// background. Must be a top-level function for the plugin's entry point.
 @pragma('vm:entry-point')
-void notificationTapBackground(NotificationResponse response) async {
-  if (response.actionId != _kSnoozeActionId) return;
-  final payload = response.payload;
-  if (payload == null || payload.isEmpty) return;
-  final data = Uri.splitQueryString(payload);
-  final bookingId = data['entity_id'];
-  if (bookingId == null || bookingId.isEmpty) return;
-
-  try {
-    final prefs = await SharedPreferences.getInstance();
-    final service = NotificationServiceImpl(
-      plugin: FlutterLocalNotificationsPlugin(),
-      prefs: prefs,
-      firebaseEnabled: false,
-    );
-    await service.initialize(requestPermissions: false);
-    await service.handleSnooze(bookingId);
-  } catch (_) {
-    // The action is best-effort; the scheduled alerts remain in place.
-  }
+void notificationTapBackground(NotificationResponse response) {
+  // The plugin's background engine creates a bare FlutterEngine without
+  // registering shared_preferences / flutter_local_notifications. Calling
+  // SharedPreferences.getInstance() or plugin.initialize() here threw
+  // "getResources() on a null object reference" and the snooze was silently
+  // lost. Keep this callback plugin-free: taps that launch the app are handled
+  // at startup via getLaunchNotification(), and taps while running use the
+  // in-isolate onDidReceiveNotificationResponse callback.
+  debugPrint('[Notifications] background tap: ${response.payload ?? ''}');
 }
 
 /// Registers the top-level FCM background handler. Must run in `main()` before
@@ -916,63 +914,18 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     // notification-block messages without it.
   }
 
+  // Server pushes always include a `notification` block, which Android and iOS
+  // render themselves even when the app process is dead. That is the reliable
+  // killed-state path; it needs the POST_NOTIFICATIONS permission and a
+  // registered FCM token, both of which are now requested after guest checkout.
   if (message.notification != null) return;
 
-  final data = message.data;
-  final title = (data['title'] ?? 'Katisha').toString();
-  final body = (data['body'] ?? '').toString();
-  if (body.isEmpty) return;
-
-  final actionable = const {
-    'new_booking',
-    'booking_paid',
-    'agent_reminder',
-  }.contains(data['type']?.toString());
-
-  try {
-    final plugin = FlutterLocalNotificationsPlugin();
-    const init = InitializationSettings(
-      android: AndroidInitializationSettings(_kSmallIcon),
-      iOS: DarwinInitializationSettings(
-        requestAlertPermission: false,
-        requestBadgePermission: false,
-        requestSoundPermission: false,
-      ),
-    );
-    await plugin.initialize(init);
-    await plugin.show(
-      DateTime.now().millisecondsSinceEpoch.remainder(100000),
-      title,
-      body,
-      NotificationDetails(
-        android: AndroidNotificationDetails(
-          actionable ? _kAgentChannelId : _kBookingChannelId,
-          actionable ? 'Action Required Alerts' : 'Booking Alerts',
-          channelDescription: actionable
-              ? 'New bookings and bookings that still need the agent to act on them'
-              : 'Notifications for new bookings, ticket issuance, and payment confirmations',
-          importance: Importance.max,
-          priority: Priority.max,
-          icon: _kSmallIcon,
-          playSound: true,
-          enableVibration: true,
-          fullScreenIntent: actionable,
-          ongoing: actionable,
-          autoCancel: !actionable,
-        ),
-        iOS: const DarwinNotificationDetails(
-          presentAlert: true,
-          presentBadge: true,
-          presentSound: true,
-        ),
-      ),
-      payload: 'title=${Uri.encodeComponent(title)}'
-          '&body=${Uri.encodeComponent(body)}'
-          '&type=${Uri.encodeComponent(data['type']?.toString() ?? 'notification')}'
-          '&entity_id=${Uri.encodeComponent((data['entity_id'] ?? data['bookingId'] ?? '').toString())}',
-    );
-  } catch (_) {
-    // Best effort: if the local plugin is unavailable in this isolate the push
-    // is still present in the notification list once the app opens.
-  }
+  // Data-only pushes used to call FlutterLocalNotificationsPlugin.initialize()
+  // and SharedPreferences here. Neither plugin is registered in FCM's background
+  // isolate, so initialize() crashed with "getResources() on a null object
+  // reference" and the catch block swallowed the message. Rendering a data-only
+  // push needs a registered background engine, so simply skip it — the server
+  // does not send data-only notifications.
+  debugPrint('[Push] data-only message ignored in background isolate: '
+      '${message.data}');
 }

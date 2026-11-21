@@ -159,6 +159,32 @@ class SessionController extends StateNotifier<SessionUser?> {
     return user;
   }
 
+  /// Adopts the account created by guest checkout.
+  ///
+  /// The booking endpoint returns the persisted user together with a fresh
+  /// token pair. Signing in from that payload — instead of only storing tokens —
+  /// makes the profile chip show the real name and lets the rest of the app
+  /// (socket connection, FCM token registration, ticket sync) treat the traveller
+  /// as authenticated even when the payment is still processing or has failed.
+  Future<SessionUser> adoptFromBooking({
+    required Map<String, dynamic> user,
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    await _api.setTokens(
+      accessToken: accessToken,
+      refreshToken: refreshToken,
+    );
+
+    final payload = user['user'] is Map
+        ? Map<String, dynamic>.from(user['user'] as Map)
+        : user;
+    final adopted = SessionUser.fromJson(payload);
+    state = adopted;
+    await _save(adopted);
+    return adopted;
+  }
+
   /// Changes the signed-in account's password.
   ///
   /// The server rotates the refresh token and returns a fresh pair, so the new

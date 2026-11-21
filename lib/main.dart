@@ -108,6 +108,24 @@ class _KatishaAppState extends ConsumerState<KatishaApp>
       final router = ref.read(appRouterProvider);
       _handleNotificationNavigation(router, payload);
     });
+    // A tap on a local notification that killed the app cannot deep-link from
+    // the background isolate, so pick it up on the next startup instead.
+    unawaited(_handleLaunchNotification(notificationService));
+  }
+
+  Future<void> _handleLaunchNotification(
+    NotificationService notificationService,
+  ) async {
+    try {
+      final payload = await notificationService.getLaunchNotification();
+      if (payload == null || !mounted) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _handleNotificationNavigation(ref.read(appRouterProvider), payload);
+      });
+    } catch (_) {
+      // A failed deep link must never block app startup.
+    }
   }
 
   /// Keeps the backend's copy of this device's FCM token current.

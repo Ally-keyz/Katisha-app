@@ -123,6 +123,8 @@ class _NoOpNotificationService implements NotificationService {
   @override
   Future<void> handleSnooze(String bookingId) async {}
   @override
+  Future<NotificationPayload?> getLaunchNotification() async => null;
+  @override
   Stream<NotificationPayload> get onNotificationTapped =>
       const Stream.empty();
   @override

@@ -49,19 +49,25 @@
             </intent-filter>
         </activity>
 
-        <!-- Flutter background messaging -->
-        <service
+        <!-- Scheduled departure alarms. These plugin classes are
+             BroadcastReceivers (the plugin schedules them with
+             PendingIntent.getBroadcast). Declaring them as <service> meant the
+             broadcast had no recipient once the app process was killed. -->
+        <receiver
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
-            android:exported="false"/>        <service
+            android:exported="false"/>
+        <!-- BOOT_COMPLETED is a system broadcast, so this receiver must be
+             exported on Android 12+ or alarms are not restored after reboot. -->
+        <receiver
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
-            android:exported="false">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED"/>
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
                 <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
             </intent-filter>
-        </service>
+        </receiver>
         <!-- Delivers the "Snooze" action button from the departure alerts -->
         <receiver
             android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"
