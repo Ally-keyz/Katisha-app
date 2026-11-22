@@ -112,6 +112,9 @@ class _NoOpNotificationService implements NotificationService {
   }) async {}
   @override
   Future<void> cancelJourneyAlert(String bookingId) async {}
+
+  @override
+  Future<void> cancelAll() async {}
   @override
   Future<void> showImmediateAlert({
     required String title,

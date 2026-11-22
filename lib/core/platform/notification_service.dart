@@ -89,6 +89,12 @@ abstract class NotificationService {
   /// Cancels a previously scheduled journey alert by booking ID.
   Future<void> cancelJourneyAlert(String bookingId);
 
+  /// Cancels all displayed and scheduled local notifications.
+  ///
+  /// Called on a real logout so the previous account's lock-screen alerts do
+  /// not keep firing once the device is signed out.
+  Future<void> cancelAll();
+
   /// Handles a snooze action — reschedules the alert for 5 minutes later.
   Future<void> handleSnooze(String bookingId);
 

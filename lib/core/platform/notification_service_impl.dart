@@ -719,6 +719,16 @@ class NotificationServiceImpl implements NotificationService {
   }
 
   @override
+  Future<void> cancelAll() async {
+    try {
+      // Clears both pending alarms and alerts already on the lock screen.
+      await _plugin.cancelAll();
+    } catch (error) {
+      debugPrint('[Notifications] Could not clear notifications: $error');
+    }
+  }
+
+  @override
   Future<void> showImmediateAlert({
     required String title,
     required String body,

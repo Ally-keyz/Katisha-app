@@ -42,7 +42,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   bool _loadingMore = false;
 
   /// Server-side unread count from `/notifications`. Null on older deployments
-  /// or when signed out, where the local cache is the best available source.
+  /// or when signed out, where no notifications are shown at all.
   int? _serverUnreadCount;
 
   NotificationsRepository get _repo => ref.read(_notificationsRepoProvider);
@@ -64,16 +64,13 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
     }
     setState(() => _loading = true);
 
-    // If the user is not signed in, don't hit the API (it would return a
-    // "session expired" error); just show the locally stored notifications.
+    // Signed-out sessions must not inherit notifications cached by a previous
+    // account. Don't hit the API either — it would return a session error.
     if (!ref.read(apiClientProvider).isAuthenticated) {
-      final local = await ref.read(localNotificationStoreProvider).getAll();
-      await ref
-          .read(badgeCountsProvider.notifier)
-          .refresh(useLocalUnread: true);
+      await ref.read(badgeCountsProvider.notifier).refresh();
       if (!mounted) return;
       setState(() {
-        _notifications = [...local];
+        _notifications = const [];
         _serverUnreadCount = null;
         _error = null;
         _loading = false;
@@ -95,6 +92,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
         if (failure is AuthFailure ||
             !ref.read(apiClientProvider).isAuthenticated) {
           setState(() {
+            _notifications = const [];
             _error = null;
             _serverUnreadCount = null;
             _loading = false;
@@ -144,6 +142,7 @@ class _NotificationsScreenState extends ConsumerState<NotificationsScreen> {
   }
 
   Future<void> _markAllRead() async {
+    if (!ref.read(apiClientProvider).isAuthenticated) return;
     setState(() => _markingRead = true);
     await ref.read(localNotificationStoreProvider).markAllRead();
     final result = await _repo.markAllAsRead();

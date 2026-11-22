@@ -199,22 +199,32 @@ class _KatishaAppState extends ConsumerState<KatishaApp>
   }
 
   void _onSessionChanged(SessionUser? user) {
+    final previousUser = _session;
     _session = user;
 
     if (user == null) {
+      // A real logout (not the initial null before session restore) must wipe
+      // the previous account's cached alerts and lock-screen notifications.
+      if (previousUser != null) {
+        unawaited(ref.read(localNotificationStoreProvider).clear());
+        unawaited(ref.read(notificationServiceProvider).cancelAll());
+      }
       _socketEventSub?.cancel();
       _socketEventSub = null;
       _registeredDeviceToken = null;
       ref.read(socketServiceProvider).disconnect();
-      // The server unread count belongs to the previous account.
-      unawaited(
-        ref.read(badgeCountsProvider.notifier).refresh(useLocalUnread: true),
-      );
+      // The previous account's server unread count must not survive logout;
+      // signed-out sessions always show a zero notification badge.
+      unawaited(ref.read(badgeCountsProvider.notifier).refresh());
       return;
     }
 
     final token = ref.read(apiClientProvider).accessToken;
     if (token == null || token.isEmpty) return;
+
+    // Tokens are loaded before the session is restored, so this refresh sees
+    // the authenticated state and restores this account's unread badge.
+    unawaited(ref.read(badgeCountsProvider.notifier).refresh());
 
     final socket = ref.read(socketServiceProvider);
     // Always make sure the handler is attached. Returning early when the socket

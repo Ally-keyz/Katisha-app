@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../network/api_client.dart';
+import '../platform/local_notification_store.dart';
 import '../platform/notification_service.dart';
 import '../platform/platform_providers.dart';
 
@@ -238,6 +239,9 @@ class SessionController extends StateNotifier<SessionUser?> {
 
     await _api.clearTokens();
     await _prefs.remove(_storageKey);
+    // The cache is device-wide, so leaving it behind would show the previous
+    // account's booking/payment events to the next signed-out session.
+    await LocalNotificationStore(_prefs).clear();
     state = null;
   }
 

@@ -5,8 +5,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../shared/models/notification_model.dart';
 
 /// Persists a local record of notifications (journey alerts, booking and
-/// payment events) so the in-app Notifications tab has content even when the
-/// device is offline or the backend has not recorded the event yet.
+/// payment events) so a signed-in user still sees them when the device is
+/// offline or the backend has not recorded the event yet. Signed-out sessions
+/// never read this cache, and logout clears it.
 class LocalNotificationStore {
   static const _storageKey = 'Katisha_local_notifications_v1';
   static const _maxEntries = 50;
@@ -73,6 +74,12 @@ class LocalNotificationStore {
     if (updated.length != entries.length) {
       await _write(updated);
     }
+  }
+
+  /// Removes every cached notification. Called on logout so one account's
+  /// events cannot appear for a different or signed-out session.
+  Future<void> clear() async {
+    await _prefs.remove(_storageKey);
   }
 
   Future<List<NotificationModel>> _read() async {

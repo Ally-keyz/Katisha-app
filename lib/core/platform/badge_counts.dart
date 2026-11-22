@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../network/api_client.dart';
 import 'platform_providers.dart';
 
 /// Holds the live counts shown as red badges on the bottom navigation bar.
@@ -19,7 +20,7 @@ class BadgeCountsNotifier extends Notifier<BadgeCounts> {
   bool _firstRefreshDone = false;
 
   /// When signed in, the server's unread count is the source of truth. The
-  /// local store is only a fallback for signed-out/offline sessions.
+  /// local store is only an offline fallback for the current account.
   int? _serverUnreadCount;
 
   @override
@@ -36,10 +37,17 @@ class BadgeCountsNotifier extends Notifier<BadgeCounts> {
 
   Future<void> _refresh() async {
     final store = ref.read(localTicketStoreProvider);
-    final notifStore = ref.read(localNotificationStoreProvider);
-
     final ticketCount = await store.getActiveTicketCount();
 
+    // A signed-out session must never inherit the previous account's cached
+    // notifications or its server count.
+    if (!ref.read(apiClientProvider).isAuthenticated) {
+      _serverUnreadCount = null;
+      state = BadgeCounts(ticketCount: ticketCount);
+      return;
+    }
+
+    final notifStore = ref.read(localNotificationStoreProvider);
     final notifications = await notifStore.getAll();
     final localUnread = notifications.where((n) => !n.read).length;
 
@@ -51,8 +59,9 @@ class BadgeCountsNotifier extends Notifier<BadgeCounts> {
 
   /// Recomputes both badges. Pass [unreadCount] from `/notifications` to make
   /// the bottom-nav badge agree with the notifications page; pass
-  /// [useLocalUnread] when signed out so the local cache becomes authoritative
-  /// again.
+  /// [useLocalUnread] to discard the old server count and fall back to the
+  /// current account's cached unread rows. Signed-out sessions always show
+  /// zero notifications.
   Future<void> refresh({int? unreadCount, bool useLocalUnread = false}) async {
     if (unreadCount != null) {
       _serverUnreadCount = unreadCount < 0 ? 0 : unreadCount;
