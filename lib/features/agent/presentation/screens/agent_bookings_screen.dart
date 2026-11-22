@@ -645,7 +645,7 @@ class _AgentBookingsScreenState extends ConsumerState<AgentBookingsScreen> {
     if (confirmed != true || !mounted) return;
     await ref.read(sessionProvider.notifier).logout();
     if (!mounted) return;
-    context.go('/login');
+    context.go('/onboarding');
   }
 
   // ── Shell ─────────────────────────────────────────────────────────────────

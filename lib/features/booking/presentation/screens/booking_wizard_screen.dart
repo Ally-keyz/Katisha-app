@@ -1696,17 +1696,19 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
                 color: AppColors.primary,
               ),
             ),
-            const SizedBox(width: AppSpacing.sm),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 120),
-              child: Text(
-                displayName,
-                overflow: TextOverflow.ellipsis,
-                style: AppTypography.labelMedium.copyWith(
-                  color: AppColors.text,
+            if (isLoggedIn) ...[
+              const SizedBox(width: AppSpacing.sm),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 120),
+                child: Text(
+                  displayName,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTypography.labelMedium.copyWith(
+                    color: AppColors.text,
+                  ),
                 ),
               ),
-            ),
+            ],
             const SizedBox(width: 2),
             const Icon(
               Icons.keyboard_arrow_down_rounded,
@@ -1766,7 +1768,11 @@ class _BookingWizardScreenState extends ConsumerState<BookingWizardScreen>
     if (confirmed != true || !mounted) return;
     await ref.read(sessionProvider.notifier).logout();
     if (!mounted) return;
-    context.go('/login');
+    setState(() {
+      _isLoggedIn = false;
+      _cachedUserName = null;
+    });
+    context.go('/onboarding');
   }
 
   void _openLanguageSelection() {
